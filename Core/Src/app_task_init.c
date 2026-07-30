@@ -1,8 +1,10 @@
 #include "app_task_init.h"
+#include "dvl.h"
 #include "log_task.h"
 #include "main.h"
 #include "motor.h"
 #include "jy901s.h"
+#include "motion.h"
 
 static const osThreadAttr_t testTaskAttributes = {
   .name = "test_task",
@@ -14,18 +16,18 @@ static const osThreadAttr_t testTaskAttributes = {
 static void TestTask(void *argument)
 {
   (void)argument;
+	DVL_Data_t dvl={0};
 	/*
 	Motor_SetTopSuction(0);
 	osDelay(5000);
 	Motor_Forward(40);
 	Motor_SetTopSuction(70);
 	*/
-	JY901S_Data_t imu={0};
   for (;;)
   {
-		JY901S_GetData(&imu);
+		DVL_GetData(&dvl);
 		
-    Log_printf("[IMU]yaw: %.2f",imu.angle_deg[2]);
+    Log_printf("[DVL]vx: %.2f vy: %.2f status: %d\r\n",dvl.velocity_mm_s[0], dvl.velocity_mm_s[1], dvl.velocity_valid);
 		
 		osDelay(1000);
   }
@@ -37,6 +39,14 @@ void App_Task_Init(void){
     Error_Handler();
   }
 	if (Log_Task_Init() != pdPASS)
+	{
+		Error_Handler();
+	}
+	if (DVL_Init() != pdPASS)
+	{
+		Error_Handler();
+	}
+	if (Motion_Task_Init() != pdPASS)
 	{
 		Error_Handler();
 	}

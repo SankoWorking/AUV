@@ -31,3 +31,5 @@ MDK-ARM/*.lst
 MDK-ARM/*.map
 MDK-ARM/*.htm
 
+# Log
+Log/*

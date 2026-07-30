@@ -401,19 +401,24 @@
               <FilePath>..\Core\Src\log_task.c</FilePath>
             </File>
             <File>
+              <FileName>dvl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\dvl.c</FilePath>
+            </File>
+            <File>
               <FileName>jy901s.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\jy901s.c</FilePath>
             </File>
             <File>
-              <FileName>jy901s.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Core\Inc\jy901s.h</FilePath>
-            </File>
-            <File>
               <FileName>motor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\motor.c</FilePath>
+            </File>
+            <File>
+              <FileName>motion.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\motion.c</FilePath>
             </File>
             <File>
               <FileName>main.c</FileName>

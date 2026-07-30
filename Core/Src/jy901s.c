@@ -1,6 +1,7 @@
 #include "jy901s.h"
 
 #include "cmsis_os2.h"
+#include "dvl.h"
 #include "main.h"
 #include "semphr.h"
 #include "stream_buffer.h"
@@ -19,6 +20,9 @@ static void JY901S_Task(void *argument);
 static void JY901S_ParseByte(uint8_t byte);
 static void JY901S_ParseFrame(const uint8_t *frame);
 static void JY901S_RestartReceiveFromIsr(void);
+void DVL_UART_RxCpltCallback(UART_HandleTypeDef *huart,
+                             BaseType_t *higher_priority_task_woken);
+void DVL_UART_ErrorCallback(UART_HandleTypeDef *huart);
 
 static JY901S_Data_t jy901sData;
 static SemaphoreHandle_t jy901sDataMutex;
@@ -124,10 +128,10 @@ BaseType_t JY901S_GetDataTimeout(JY901S_Data_t *data, TickType_t timeout_ticks)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+  BaseType_t higherPriorityTaskWoken = pdFALSE;
+
   if (huart->Instance == UART7)
   {
-    BaseType_t higherPriorityTaskWoken = pdFALSE;
-
     if ((jy901sRxStream == NULL) ||
         (xStreamBufferSendFromISR(jy901sRxStream,
                                   &jy901sRxByte,
@@ -138,8 +142,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
 
     JY901S_RestartReceiveFromIsr();
-    portYIELD_FROM_ISR(higherPriorityTaskWoken);
   }
+
+  DVL_UART_RxCpltCallback(huart, &higherPriorityTaskWoken);
+  portYIELD_FROM_ISR(higherPriorityTaskWoken);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
@@ -149,6 +155,8 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     jy901sUartErrorCount++;
     JY901S_RestartReceiveFromIsr();
   }
+
+  DVL_UART_ErrorCallback(huart);
 }
 
 static void JY901S_Task(void *argument)

@@ -77,6 +77,7 @@ NVIC.TIM15_IRQn=true\:15\:0\:false\:false\:true\:false\:false\:true\:true
 NVIC.TimeBase=TIM15_IRQn
 NVIC.TimeBaseIP=TIM15
 NVIC.UART7_IRQn=true\:5\:0\:false\:false\:true\:false\:false\:true\:true
+NVIC.USART1_IRQn=true\:5\:0\:false\:false\:true\:false\:false\:true\:true
 NVIC.UsageFault_IRQn=true\:0\:0\:false\:false\:true\:false\:false\:false\:false
 PA10.Locked=true
 PA10.Mode=Asynchronous
