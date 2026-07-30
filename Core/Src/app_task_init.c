@@ -1,6 +1,7 @@
 #include "app_task_init.h"
 #include "log_task.h"
 #include "main.h"
+#include "motor.h"
 
 static const osThreadAttr_t testTaskAttributes = {
   .name = "test_task",
@@ -12,7 +13,11 @@ static const osThreadAttr_t testTaskAttributes = {
 static void TestTask(void *argument)
 {
   (void)argument;
-
+	Motor_SetTopSuction(0);
+	osDelay(5000);
+	Motor_Forward(40);
+	
+	Motor_SetTopSuction(70);
   for (;;)
   {
     Log_printf("hello");

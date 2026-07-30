@@ -396,19 +396,14 @@
               <FilePath>..\Core\Src\app_task_init.c</FilePath>
             </File>
             <File>
-              <FileName>app_task_init.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Core\Inc\app_task_init.h</FilePath>
-            </File>
-            <File>
               <FileName>log_task.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\log_task.c</FilePath>
             </File>
             <File>
-              <FileName>log_task.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Core\Inc\log_task.h</FilePath>
+              <FileName>motor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\motor.c</FilePath>
             </File>
             <File>
               <FileName>main.c</FileName>
