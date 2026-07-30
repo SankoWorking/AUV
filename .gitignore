@@ -1,0 +1,33 @@
+# Keil MDK build output
+MDK-ARM/*/
+!MDK-ARM/DebugConfig/
+!MDK-ARM/RTE/
+MDK-ARM/**/*.o
+MDK-ARM/**/*.d
+MDK-ARM/**/*.crf
+MDK-ARM/**/*.lst
+MDK-ARM/**/*.map
+MDK-ARM/**/*.htm
+MDK-ARM/**/*.lnp
+MDK-ARM/**/*.sct
+MDK-ARM/**/*.axf
+MDK-ARM/**/*.elf
+MDK-ARM/**/*.hex
+MDK-ARM/**/*.bin
+MDK-ARM/**/*.lib
+MDK-ARM/**/*.dep
+MDK-ARM/**/*.iex
+
+# Keil user/session files
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvgui.*
+MDK-ARM/*.uvgui_*
+MDK-ARM/*.uvopt
+MDK-ARM/*.uvoptx.*
+MDK-ARM/*.bak
+
+# Generated listings in project root of MDK-ARM
+MDK-ARM/*.lst
+MDK-ARM/*.map
+MDK-ARM/*.htm
+
