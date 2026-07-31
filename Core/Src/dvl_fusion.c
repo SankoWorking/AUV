@@ -14,6 +14,9 @@
 #define DVL_FUSION_MAX_DT_MS                  400U
 #define DVL_FUSION_MM_S_TO_M_S                0.001f
 #define DVL_FUSION_DEG_TO_RAD                 0.017453292519943295f
+/* DVL position relative to the rotation center in body frame, unit: meter. */
+#define DVL_FUSION_DVL_OFFSET_X_M             0.15f
+#define DVL_FUSION_DVL_OFFSET_Y_M             0.20f
 
 static void DVL_Fusion_Task(void *argument);
 
@@ -65,15 +68,29 @@ static void DVL_Fusion_BodyToNav(float body_vx_mps,
   *ve_mps = (s * body_vx_mps) + (c * body_vy_mps);
 }
 
+static void DVL_Fusion_CompensateLeverArm(float dvl_vx_mps,
+                                          float dvl_vy_mps,
+                                          float yaw_rate_dps,
+                                          float *body_vx_mps,
+                                          float *body_vy_mps)
+{
+  float yaw_rate_rad_s = yaw_rate_dps * DVL_FUSION_DEG_TO_RAD;
+
+  *body_vx_mps = dvl_vx_mps + (yaw_rate_rad_s * DVL_FUSION_DVL_OFFSET_Y_M);
+  *body_vy_mps = dvl_vy_mps - (yaw_rate_rad_s * DVL_FUSION_DVL_OFFSET_X_M);
+}
+
 static void DVL_Fusion_UpdateVelocityState(const DVL_Data_t *dvl,
                                            const JY901S_Data_t *imu,
+                                           float body_vx_mps,
+                                           float body_vy_mps,
                                            float vn_mps,
                                            float ve_mps)
 {
   fusionState.vn_mps = vn_mps;
   fusionState.ve_mps = ve_mps;
-  fusionState.body_vx_mps = dvl->vx * DVL_FUSION_MM_S_TO_M_S;
-  fusionState.body_vy_mps = dvl->vy * DVL_FUSION_MM_S_TO_M_S;
+  fusionState.body_vx_mps = body_vx_mps;
+  fusionState.body_vy_mps = body_vy_mps;
   fusionState.yaw_deg = imu->angle_deg[2];
   fusionState.dvl_frame_count = dvl->frame_count;
   fusionState.dvl_filter_timestamp = dvl->filter_timestamp;
@@ -81,10 +98,12 @@ static void DVL_Fusion_UpdateVelocityState(const DVL_Data_t *dvl,
 
 static void DVL_Fusion_SetBaseline(const DVL_Data_t *dvl,
                                    const JY901S_Data_t *imu,
+                                   float body_vx_mps,
+                                   float body_vy_mps,
                                    float vn_mps,
                                    float ve_mps)
 {
-  DVL_Fusion_UpdateVelocityState(dvl, imu, vn_mps, ve_mps);
+  DVL_Fusion_UpdateVelocityState(dvl, imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
   lastVnMps = vn_mps;
   lastVeMps = ve_mps;
   lastBodyVxMmS = dvl->vx;
@@ -190,7 +209,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     return DVL_FUSION_UPDATE_IMU_READ_FAIL;
   }
 
-  if (imu.angle_valid == 0U)
+  if ((imu.angle_valid == 0U) || (imu.gyro_valid == 0U))
   {
     haveLastVelocity = 0U;
     fusionState.velocity_valid = 0U;
@@ -199,8 +218,11 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     return DVL_FUSION_UPDATE_IMU_INVALID;
   }
 
-  body_vx_mps = dvl.vx * DVL_FUSION_MM_S_TO_M_S;
-  body_vy_mps = dvl.vy * DVL_FUSION_MM_S_TO_M_S;
+  DVL_Fusion_CompensateLeverArm(dvl.vx * DVL_FUSION_MM_S_TO_M_S,
+                                dvl.vy * DVL_FUSION_MM_S_TO_M_S,
+                                imu.gyro_dps[2],
+                                &body_vx_mps,
+                                &body_vy_mps);
   DVL_Fusion_BodyToNav(body_vx_mps,
                        body_vy_mps,
                        imu.angle_deg[2],
@@ -210,7 +232,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
   if (dvl.filter_failure_count != lastFilterFailureCount)
   {
     lastFilterFailureCount = dvl.filter_failure_count;
-    DVL_Fusion_SetBaseline(&dvl, &imu, vn_mps, ve_mps);
+    DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
     DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_FILTER_FAIL);
     return DVL_FUSION_UPDATE_FILTER_FAIL;
   }
@@ -221,7 +243,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     recoverySkipRemaining--;
     haveLastVelocity = 0U;
     fusionState.velocity_valid = 0U;
-    DVL_Fusion_UpdateVelocityState(&dvl, &imu, vn_mps, ve_mps);
+    DVL_Fusion_UpdateVelocityState(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
     DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_RECOVERY_SKIP);
     return DVL_FUSION_UPDATE_RECOVERY_SKIP;
   }
@@ -233,7 +255,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     if ((jump_vx > DVL_FUSION_MAX_SPEED_JUMP_MM_S) ||
         (jump_vy > DVL_FUSION_MAX_SPEED_JUMP_MM_S))
     {
-      DVL_Fusion_SetBaseline(&dvl, &imu, vn_mps, ve_mps);
+      DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
       DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_SPEED_JUMP);
       return DVL_FUSION_UPDATE_SPEED_JUMP;
     }
@@ -241,7 +263,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     dt_ms = dvl.filter_timestamp - lastFilterTimestamp;
     if ((dt_ms < DVL_FUSION_MIN_DT_MS) || (dt_ms > DVL_FUSION_MAX_DT_MS))
     {
-      DVL_Fusion_SetBaseline(&dvl, &imu, vn_mps, ve_mps);
+      DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
       DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_DT_INVALID);
       return DVL_FUSION_UPDATE_DT_INVALID;
     }
@@ -250,12 +272,12 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     fusionState.x_m += 0.5f * (lastVnMps + vn_mps) * dt_s;
     fusionState.y_m += 0.5f * (lastVeMps + ve_mps) * dt_s;
     fusionState.integrated_count++;
-    DVL_Fusion_SetBaseline(&dvl, &imu, vn_mps, ve_mps);
+    DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
     DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_INTEGRATED);
     return DVL_FUSION_UPDATE_INTEGRATED;
   }
 
-  DVL_Fusion_SetBaseline(&dvl, &imu, vn_mps, ve_mps);
+  DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
   DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_BASELINE_SET);
   return DVL_FUSION_UPDATE_BASELINE_SET;
 }
