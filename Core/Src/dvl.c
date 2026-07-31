@@ -3,11 +3,12 @@
 #include "main.h"
 #include "semphr.h"
 #include "stream_buffer.h"
+#include <stdlib.h>
+#include <string.h>
 
 #define DVL_RX_STREAM_SIZE      256U
 #define DVL_RX_TASK_CHUNK_SIZE  32U
 #define DVL_LINE_BUFFER_SIZE    96U
-#define DVL_FIELD_COUNT         6U
 
 extern UART_HandleTypeDef huart1;
 
@@ -22,69 +23,11 @@ static StreamBufferHandle_t dvlRxStream;
 static osThreadId_t dvlTaskHandle;
 static uint8_t dvlRxByte;
 
-static volatile uint32_t dvlRxDropCount;
-static volatile uint32_t dvlUartErrorCount;
-static volatile uint32_t dvlRxRestartErrorCount;
-
 static const osThreadAttr_t dvlTaskAttributes = {
   .name = "dvl_task",
   .stack_size = DVL_TASK_STACK_SIZE_BYTES,
   .priority = (osPriority_t)DVL_TASK_PRIORITY,
 };
-
-static int32_t DVL_ParseSignedMmS(const char *text, uint8_t *ok)
-{
-  int32_t sign = 1;
-  int32_t value = 0;
-  uint8_t digitCount = 0U;
-
-  if ((text == NULL) || (ok == NULL))
-  {
-    return 0;
-  }
-
-  *ok = 0U;
-
-  if (*text == '-')
-  {
-    sign = -1;
-    text++;
-  }
-  else if (*text == '+')
-  {
-    text++;
-  }
-
-  while ((*text >= '0') && (*text <= '9'))
-  {
-    value = (value * 10) + (int32_t)(*text - '0');
-    digitCount++;
-    text++;
-  }
-
-  if ((*text == '\0') && (digitCount > 0U))
-  {
-    *ok = 1U;
-  }
-
-  return value * sign;
-}
-
-static void DVL_CopyCounters(DVL_Data_t *data)
-{
-  data->rx_drop_count = dvlRxDropCount;
-  data->uart_error_count = dvlUartErrorCount + dvlRxRestartErrorCount;
-}
-
-static void DVL_IncrementParseError(void)
-{
-  if ((dvlDataMutex != NULL) &&
-      (xSemaphoreTake(dvlDataMutex, portMAX_DELAY) == pdTRUE))
-  {
-    dvlData.parse_error_count++;
-    xSemaphoreGive(dvlDataMutex);
-  }
-}
 
 BaseType_t DVL_Init(void)
 {
@@ -132,7 +75,6 @@ BaseType_t DVL_GetDataTimeout(DVL_Data_t *data, TickType_t timeout_ticks)
   }
 
   *data = dvlData;
-  DVL_CopyCounters(data);
   xSemaphoreGive(dvlDataMutex);
 
   return pdPASS;
@@ -148,13 +90,12 @@ void DVL_UART_RxCpltCallback(UART_HandleTypeDef *huart,
                             higher_priority_task_woken :
                             &localTaskWoken;
 
-    if ((dvlRxStream == NULL) ||
-        (xStreamBufferSendFromISR(dvlRxStream,
-                                  &dvlRxByte,
-                                  1U,
-                                  taskWoken) != 1U))
+    if (dvlRxStream != NULL)
     {
-      dvlRxDropCount++;
+      (void)xStreamBufferSendFromISR(dvlRxStream,
+                                     &dvlRxByte,
+                                     1U,
+                                     taskWoken);
     }
 
     DVL_RestartReceiveFromIsr();
@@ -165,7 +106,6 @@ void DVL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART1)
   {
-    dvlUartErrorCount++;
     DVL_RestartReceiveFromIsr();
   }
 }
@@ -201,23 +141,32 @@ static void DVL_ParseByte(uint8_t byte)
   static char line[DVL_LINE_BUFFER_SIZE];
   static uint8_t index;
 
-  if (byte == '\r')
+  if (byte == (uint8_t)':')
   {
+    index = 0U;
+    line[index++] = (char)byte;
     return;
   }
 
-  if (byte == '\n')
+  if (byte == (uint8_t)'\n')
   {
-    line[index] = '\0';
-    DVL_ParseLine(line);
+    if (index > 0U)
+    {
+      line[index] = '\0';
+      DVL_ParseLine(line);
+    }
     index = 0U;
+    return;
+  }
+
+  if (byte == (uint8_t)'\r')
+  {
     return;
   }
 
   if (index >= (DVL_LINE_BUFFER_SIZE - 1U))
   {
     index = 0U;
-    DVL_IncrementParseError();
     return;
   }
 
@@ -226,108 +175,57 @@ static void DVL_ParseByte(uint8_t byte)
 
 static void DVL_ParseLine(char *line)
 {
-  char *fields[DVL_FIELD_COUNT];
-  char *cursor = line;
-  uint8_t fieldIndex = 0U;
-  uint8_t ok = 0U;
-  DVL_Data_t parsedData = {0};
+  char *p;
+  float raw_vx;
+  float raw_vy;
+  float raw_vz;
+  float raw_ve;
+  uint8_t raw_status = 0U;
 
   if ((line == NULL) || (line[0] == '\0'))
   {
     return;
   }
 
-  while ((fieldIndex < DVL_FIELD_COUNT) && (cursor != NULL))
+  if (strncmp(line, ":BI,", 4) != 0)
   {
-    char *comma = cursor;
-
-    fields[fieldIndex++] = cursor;
-
-    while ((*comma != ',') && (*comma != '\0'))
-    {
-      comma++;
-    }
-
-    if (*comma == ',')
-    {
-      *comma = '\0';
-      cursor = comma + 1;
-    }
-    else
-    {
-      cursor = NULL;
-    }
-  }
-
-  if ((fieldIndex != DVL_FIELD_COUNT) ||
-      (cursor != NULL) ||
-      (fields[0][0] != ':') ||
-      (fields[0][1] != 'B') ||
-      (fields[0][2] != 'I') ||
-      (fields[0][3] != '\0') ||
-      (fields[5][1] != '\0') ||
-      ((fields[5][0] != 'A') && (fields[5][0] != 'V')))
-  {
-    if ((line[0] == ':') && (line[1] == 'B') && (line[2] == 'I'))
-    {
-      DVL_IncrementParseError();
-    }
     return;
   }
 
-  parsedData.velocity_mm_s[0] = DVL_ParseSignedMmS(fields[1], &ok);
-  if (ok == 0U)
-  {
-    DVL_IncrementParseError();
-    return;
-  }
+  p = line + 4;
+  raw_vx = strtof(p, &p); if (*p == ',') p++;
+  raw_vy = strtof(p, &p); if (*p == ',') p++;
+  raw_vz = strtof(p, &p); if (*p == ',') p++;
+  raw_ve = strtof(p, &p); if (*p == ',') p++;
 
-  parsedData.velocity_mm_s[1] = DVL_ParseSignedMmS(fields[2], &ok);
-  if (ok == 0U)
+  while (*p == ' ')
   {
-    DVL_IncrementParseError();
-    return;
+    p++;
   }
-
-  parsedData.velocity_mm_s[2] = DVL_ParseSignedMmS(fields[3], &ok);
-  if (ok == 0U)
+  if ((*p != '\0') && (*p != '*'))
   {
-    DVL_IncrementParseError();
-    return;
+    raw_status = (uint8_t)*p;
   }
-
-  parsedData.velocity_error_mm_s = DVL_ParseSignedMmS(fields[4], &ok);
-  if (ok == 0U)
-  {
-    DVL_IncrementParseError();
-    return;
-  }
-
-  parsedData.timestamp_ms = HAL_GetTick();
-  parsedData.velocity_valid = (fields[5][0] == 'A') ? 1U : 0U;
 
   if ((dvlDataMutex != NULL) &&
       (xSemaphoreTake(dvlDataMutex, portMAX_DELAY) == pdTRUE))
   {
-    uint32_t parseErrorCount = dvlData.parse_error_count;
-    uint32_t invalidVelocityCount = dvlData.invalid_velocity_count;
-
-    dvlData = parsedData;
-    dvlData.parse_error_count = parseErrorCount;
-    dvlData.invalid_velocity_count = invalidVelocityCount;
-    if (dvlData.velocity_valid == 0U)
+    dvlData.raw_vx = raw_vx;
+    dvlData.raw_vy = raw_vy;
+    dvlData.raw_vz = raw_vz;
+    dvlData.raw_ve = raw_ve;
+    dvlData.status = raw_status;
+    if (raw_status != (uint8_t)'A')
     {
-      dvlData.invalid_velocity_count++;
+      dvlData.velocity_invalid_count++;
     }
     dvlData.frame_count++;
+    dvlData.timestamp = HAL_GetTick();
     xSemaphoreGive(dvlDataMutex);
   }
 }
 
 static void DVL_RestartReceiveFromIsr(void)
 {
-  if (HAL_UART_Receive_IT(&huart1, &dvlRxByte, 1U) != HAL_OK)
-  {
-    dvlRxRestartErrorCount++;
-  }
+  (void)HAL_UART_Receive_IT(&huart1, &dvlRxByte, 1U);
 }

@@ -27,9 +27,15 @@ static void TestTask(void *argument)
   {
 		DVL_GetData(&dvl);
 		
-    Log_printf("[DVL]vx: %.2f vy: %.2f status: %d\r\n",dvl.velocity_mm_s[0], dvl.velocity_mm_s[1], dvl.velocity_valid);
+    Log_printf("[DVL]vx: %.2f vy: %.2f status: %c invalid: %u frame: %lu timestamp: %lu\r\n",
+               dvl.raw_vx,
+               dvl.raw_vy,
+               (char)dvl.status,
+               dvl.velocity_invalid_count,
+               (unsigned long)dvl.frame_count,
+               (unsigned long)dvl.timestamp);
 		
-		osDelay(1000);
+		osDelay(100);
   }
 }
 
@@ -46,9 +52,11 @@ void App_Task_Init(void){
 	{
 		Error_Handler();
 	}
+	
 	if (Motion_Task_Init() != pdPASS)
 	{
 		Error_Handler();
 	}
+	
 	osThreadId_t testTaskHandle = osThreadNew(TestTask, NULL, &testTaskAttributes);
 }

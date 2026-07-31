@@ -12,18 +12,16 @@ extern "C" {
 #define DVL_TASK_STACK_SIZE_BYTES (512U * 4U)
 #define DVL_TASK_PRIORITY         osPriorityNormal
 
-typedef struct
-{
-  int32_t velocity_mm_s[3];
-  int32_t velocity_error_mm_s;
-  uint32_t timestamp_ms;
-  uint32_t frame_count;
-  uint32_t parse_error_count;
-  uint32_t invalid_velocity_count;
-  uint32_t rx_drop_count;
-  uint32_t uart_error_count;
-  uint8_t velocity_valid;
-} DVL_Data_t;
+typedef struct{
+	float raw_vx;
+	float raw_vy;
+	float raw_vz;
+	float raw_ve;
+	uint8_t status;
+	uint8_t velocity_invalid_count;
+	uint32_t frame_count;
+	uint32_t timestamp;
+}DVL_Data_t;
 
 BaseType_t DVL_Init(void);
 BaseType_t DVL_GetData(DVL_Data_t *data);
