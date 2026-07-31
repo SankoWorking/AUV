@@ -11,7 +11,7 @@
 #define MOTION_TURN_KP               0.75f
 #define MOTION_TURN_KI               0.02f
 #define MOTION_TURN_KD               0.12f
-#define MOTION_TURN_MIN_SPEED        20
+#define MOTION_TURN_MIN_SPEED        30
 #define MOTION_TURN_MAX_SPEED        55
 #define MOTION_TURN_TOLERANCE_DEG    5.0f
 #define MOTION_TURN_RATE_TOLERANCE_DPS 8.0f
@@ -25,6 +25,8 @@
 #define MOTION_TURN_LOG_INTERVAL_MS  200U
 #define MOTION_TASK_STACK_SIZE_BYTES (512U * 4U)
 #define MOTION_TASK_PRIORITY         osPriorityNormal
+#define MOTION_TOP_SUCTION_START_DELAY_MS 3000U
+#define MOTION_TOP_SUCTION_START_PERCENT  50U
 
 static void MotionTask(void *argument);
 static BaseType_t Motion_RunForwardTurn180Forward(void);
@@ -308,6 +310,14 @@ BaseType_t Motion_Task_Init(void)
 static void MotionTask(void *argument)
 {
   (void)argument;
+
+  Log_printf("[MOTION] phase=top_suction_arm speed=0 duration_ms=%u\r\n",
+             MOTION_TOP_SUCTION_START_DELAY_MS);
+  Motor_SetTopSuction(0U);
+  osDelay(MOTION_TOP_SUCTION_START_DELAY_MS);
+  Motor_SetTopSuction(MOTION_TOP_SUCTION_START_PERCENT);
+  Log_printf("[MOTION] phase=top_suction_start speed=%u\r\n",
+             MOTION_TOP_SUCTION_START_PERCENT);
 
   (void)Motion_RunForwardTurn180Forward();
 

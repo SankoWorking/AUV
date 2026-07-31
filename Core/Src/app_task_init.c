@@ -19,8 +19,7 @@ static void TestTask(void *argument)
 	DVL_Data_t dvl={0};
 	/*
 	Motor_SetTopSuction(0);
-	osDelay(5000);
-	Motor_Forward(40);
+	osDelay(3000);
 	Motor_SetTopSuction(70);
 	*/
   for (;;)
