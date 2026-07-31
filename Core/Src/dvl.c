@@ -21,12 +21,19 @@
 #define DVL_STARTUP_ACK_PREFIX  "ML "
 #define DVL_STARTUP_ACK_VALUE   600.0f
 #define DVL_STARTUP_ACK_EPSILON 0.1f
+#define DVL_FILTER_JUMP_THRESHOLD_MM_S 50.0f
+#define DVL_FILTER_RESET_INVALID_FRAME_COUNT 3U
+#define DVL_FILTER_RECAPTURE_FAILURE_COUNT 5U
 
 extern UART_HandleTypeDef huart1;
 
 static void DVL_Task(void *argument);
 static void DVL_ParseByte(uint8_t byte);
 static void DVL_ParseLine(char *line);
+static uint8_t DVL_UpdateVelocityFilter(float raw_vx,
+                                        float raw_vy,
+                                        uint32_t timestamp);
+static float DVL_AbsFloat(float value);
 #if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
 static uint8_t DVL_ParseStartupAck(char *line);
 #endif
@@ -39,6 +46,8 @@ static osThreadId_t dvlTaskHandle;
 static osEventFlagsId_t dvlEventFlags;
 static uint8_t dvlRxByte;
 static uint8_t dvlConsecutiveValidFrames;
+static uint8_t dvlConsecutiveInvalidFrames;
+static uint8_t dvlConsecutiveFilterFailures;
 static volatile uint8_t dvlWaitingStartupAck;
 static volatile uint8_t dvlForwardStartupLines;
 
@@ -290,6 +299,7 @@ static void DVL_ParseLine(char *line)
   float raw_ve;
   uint8_t raw_status = 0U;
   uint8_t validFrame;
+  uint32_t now;
 
   if ((line == NULL) || (line[0] == '\0'))
   {
@@ -335,6 +345,7 @@ static void DVL_ParseLine(char *line)
   if ((dvlDataMutex != NULL) &&
       (xSemaphoreTake(dvlDataMutex, portMAX_DELAY) == pdTRUE))
   {
+    now = HAL_GetTick();
     dvlData.raw_vx = raw_vx;
     dvlData.raw_vy = raw_vy;
     dvlData.raw_vz = raw_vz;
@@ -344,8 +355,28 @@ static void DVL_ParseLine(char *line)
     {
       dvlData.velocity_invalid_count++;
     }
+    if (validFrame != 0U)
+    {
+      dvlConsecutiveInvalidFrames = 0U;
+      (void)DVL_UpdateVelocityFilter(raw_vx, raw_vy, now);
+    }
+    else
+    {
+      if (dvlConsecutiveInvalidFrames < DVL_FILTER_RESET_INVALID_FRAME_COUNT)
+      {
+        dvlConsecutiveInvalidFrames++;
+      }
+
+      if (dvlConsecutiveInvalidFrames >= DVL_FILTER_RESET_INVALID_FRAME_COUNT)
+      {
+        dvlData.vx = 0.0f;
+        dvlData.vy = 0.0f;
+        dvlData.filter_timestamp = 0U;
+        dvlConsecutiveFilterFailures = 0U;
+      }
+    }
     dvlData.frame_count++;
-    dvlData.timestamp = HAL_GetTick();
+    dvlData.timestamp = now;
     xSemaphoreGive(dvlDataMutex);
   }
 
@@ -365,6 +396,44 @@ static void DVL_ParseLine(char *line)
   {
     dvlConsecutiveValidFrames = 0U;
   }
+}
+
+static uint8_t DVL_UpdateVelocityFilter(float raw_vx,
+                                        float raw_vy,
+                                        uint32_t timestamp)
+{
+  if (dvlData.filter_timestamp != 0U)
+  {
+    float deltaVx = DVL_AbsFloat(raw_vx - dvlData.vx);
+    float deltaVy = DVL_AbsFloat(raw_vy - dvlData.vy);
+
+    if ((deltaVx > DVL_FILTER_JUMP_THRESHOLD_MM_S) ||
+        (deltaVy > DVL_FILTER_JUMP_THRESHOLD_MM_S))
+    {
+      dvlData.filter_failure_count++;
+      if (dvlConsecutiveFilterFailures < DVL_FILTER_RECAPTURE_FAILURE_COUNT)
+      {
+        dvlConsecutiveFilterFailures++;
+      }
+
+      if (dvlConsecutiveFilterFailures < DVL_FILTER_RECAPTURE_FAILURE_COUNT)
+      {
+        return 0U;
+      }
+    }
+  }
+
+  dvlData.vx = raw_vx;
+  dvlData.vy = raw_vy;
+  dvlData.filter_timestamp = timestamp;
+  dvlConsecutiveFilterFailures = 0U;
+
+  return 1U;
+}
+
+static float DVL_AbsFloat(float value)
+{
+  return (value < 0.0f) ? -value : value;
 }
 
 #if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)

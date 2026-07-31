@@ -27,7 +27,7 @@ static void TestTask(void *argument)
   {
     for (;;)
     {
-      osDelay(1000U);
+      osDelay(1500U);
     }
   }
 
@@ -35,11 +35,14 @@ static void TestTask(void *argument)
   {
 		DVL_GetData(&dvl);
 		
-    Log_printf("[DVL]vx: %.2f vy: %.2f status: %c invalid: %u frame: %lu timestamp: %lu\r\n",
+    Log_printf("[DVL]raw_vx: %.2f raw_vy: %.2f filt_vx: %.2f filt_vy: %.2f status: %c invalid: %u filter_fail: %u frame: %lu timestamp: %lu\r\n",
                dvl.raw_vx,
                dvl.raw_vy,
+               dvl.vx,
+               dvl.vy,
                (char)dvl.status,
                dvl.velocity_invalid_count,
+               (unsigned int)dvl.filter_failure_count,
                (unsigned long)dvl.frame_count,
                (unsigned long)dvl.timestamp);
 		

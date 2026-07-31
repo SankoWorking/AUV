@@ -10,7 +10,7 @@ extern "C" {
 #include <stdint.h>
 
 #define JY901S_TASK_STACK_SIZE_BYTES (512U * 4U)
-#define JY901S_TASK_PRIORITY         osPriorityNormal
+#define JY901S_TASK_PRIORITY         osPriorityAboveNormal
 
 typedef struct
 {
