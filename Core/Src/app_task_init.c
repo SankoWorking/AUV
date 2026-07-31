@@ -47,8 +47,8 @@ static void TestTask(void *argument)
                (unsigned long)nav.rejected_count,
                (unsigned int)nav.last_update,
                (unsigned int)nav.velocity_valid);
-		DVL_GetData(&dvl);
 		*/
+		DVL_GetData(&dvl);
     Log_printf("[DVL]raw_vx: %.2f raw_vy: %.2f filt_vx: %.2f filt_vy: %.2f status: %c invalid: %u filter_fail: %u frame: %lu timestamp: %lu\r\n",
                dvl.raw_vx,
                dvl.raw_vy,
