@@ -1,5 +1,6 @@
 #include "dvl.h"
 
+#include "dvl_fusion.h"
 #include "log_task.h"
 #include "main.h"
 #include "semphr.h"
@@ -299,6 +300,7 @@ static void DVL_ParseLine(char *line)
   float raw_ve;
   uint8_t raw_status = 0U;
   uint8_t validFrame;
+  uint8_t filterUpdated = 0U;
   uint32_t now;
 
   if ((line == NULL) || (line[0] == '\0'))
@@ -358,7 +360,7 @@ static void DVL_ParseLine(char *line)
     if (validFrame != 0U)
     {
       dvlConsecutiveInvalidFrames = 0U;
-      (void)DVL_UpdateVelocityFilter(raw_vx, raw_vy, now);
+      filterUpdated = DVL_UpdateVelocityFilter(raw_vx, raw_vy, now);
     }
     else
     {
@@ -378,6 +380,11 @@ static void DVL_ParseLine(char *line)
     dvlData.frame_count++;
     dvlData.timestamp = now;
     xSemaphoreGive(dvlDataMutex);
+  }
+
+  if (filterUpdated != 0U)
+  {
+    DVL_Fusion_NotifyFromDvlTask();
   }
 
   if (validFrame != 0U)

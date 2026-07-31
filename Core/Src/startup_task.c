@@ -52,7 +52,7 @@ BaseType_t Startup_WaitSystemReady(TickType_t timeout_ticks)
 
   flags = osEventFlagsWait(startupEventFlags,
                            STARTUP_EVENT_SYSTEM_READY,
-                           osFlagsWaitAny,
+                           osFlagsWaitAny | osFlagsNoClear,
                            timeout_ticks);
   if ((flags & osFlagsError) != 0U)
   {

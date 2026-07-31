@@ -406,6 +406,11 @@
               <FilePath>..\Core\Src\dvl.c</FilePath>
             </File>
             <File>
+              <FileName>dvl_fusion.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\dvl_fusion.c</FilePath>
+            </File>
+            <File>
               <FileName>jy901s.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\jy901s.c</FilePath>
