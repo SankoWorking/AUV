@@ -5,6 +5,7 @@
 #include "motor.h"
 #include "jy901s.h"
 #include "motion.h"
+#include "startup_task.h"
 
 static const osThreadAttr_t testTaskAttributes = {
   .name = "test_task",
@@ -22,6 +23,14 @@ static void TestTask(void *argument)
 	osDelay(3000);
 	Motor_SetTopSuction(70);
 	*/
+  if (Startup_WaitSystemReady(osWaitForever) != pdPASS)
+  {
+    for (;;)
+    {
+      osDelay(1000U);
+    }
+  }
+
   for (;;)
   {
 		DVL_GetData(&dvl);
@@ -56,6 +65,11 @@ void App_Task_Init(void){
 	{
 		Error_Handler();
 	}
-	
+
+	if (Startup_Task_Init() != pdPASS)
+	{
+		Error_Handler();
+	}
+
 	osThreadId_t testTaskHandle = osThreadNew(TestTask, NULL, &testTaskAttributes);
 }

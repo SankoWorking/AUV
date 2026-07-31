@@ -4,6 +4,7 @@
 #include "jy901s.h"
 #include "log_task.h"
 #include "motor.h"
+#include "startup_task.h"
 
 #define MOTION_FORWARD_SPEED_PERCENT 40
 #define MOTION_FORWARD_TIME_MS       5000U
@@ -25,8 +26,6 @@
 #define MOTION_TURN_LOG_INTERVAL_MS  200U
 #define MOTION_TASK_STACK_SIZE_BYTES (512U * 4U)
 #define MOTION_TASK_PRIORITY         osPriorityNormal
-#define MOTION_TOP_SUCTION_START_DELAY_MS 3000U
-#define MOTION_TOP_SUCTION_START_PERCENT  50U
 
 static void MotionTask(void *argument);
 static BaseType_t Motion_RunForwardTurn180Forward(void);
@@ -311,13 +310,17 @@ static void MotionTask(void *argument)
 {
   (void)argument;
 
-  Log_printf("[MOTION] phase=top_suction_arm speed=0 duration_ms=%u\r\n",
-             MOTION_TOP_SUCTION_START_DELAY_MS);
-  Motor_SetTopSuction(0U);
-  osDelay(MOTION_TOP_SUCTION_START_DELAY_MS);
-  Motor_SetTopSuction(MOTION_TOP_SUCTION_START_PERCENT);
-  Log_printf("[MOTION] phase=top_suction_start speed=%u\r\n",
-             MOTION_TOP_SUCTION_START_PERCENT);
+  Log_printf("[MOTION] phase=wait_system_ready\r\n");
+  if (Startup_WaitSystemReady(osWaitForever) != pdPASS)
+  {
+    Motor_Stop();
+    Log_printf("[MOTION] phase=abort reason=system_not_ready\r\n");
+    for (;;)
+    {
+      osDelay(1000U);
+    }
+  }
+  Log_printf("[MOTION] phase=system_ready\r\n");
 
   (void)Motion_RunForwardTurn180Forward();
 

@@ -421,6 +421,11 @@
               <FilePath>..\Core\Src\motion.c</FilePath>
             </File>
             <File>
+              <FileName>startup_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\startup_task.c</FilePath>
+            </File>
+            <File>
               <FileName>main.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/main.c</FilePath>

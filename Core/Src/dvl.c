@@ -1,5 +1,6 @@
 #include "dvl.h"
 
+#include "log_task.h"
 #include "main.h"
 #include "semphr.h"
 #include "stream_buffer.h"
@@ -9,19 +10,37 @@
 #define DVL_RX_STREAM_SIZE      256U
 #define DVL_RX_TASK_CHUNK_SIZE  32U
 #define DVL_LINE_BUFFER_SIZE    96U
+#define DVL_STARTUP_COMMAND     "ML 600,SV 0\r\n"
+#define DVL_STARTUP_ACK_CHECK_ENABLE 0U
+#define DVL_STARTUP_TX_TIMEOUT_MS 100U
+#define DVL_STARTUP_FORWARD_WINDOW_MS 10000U
+#define DVL_RX_START_TIMEOUT_MS 2000U
+#define DVL_EVENT_RX_STARTED    (1U << 0)
+#define DVL_EVENT_READY         (1U << 1)
+#define DVL_EVENT_STARTUP_ACK   (1U << 2)
+#define DVL_STARTUP_ACK_PREFIX  "ML "
+#define DVL_STARTUP_ACK_VALUE   600.0f
+#define DVL_STARTUP_ACK_EPSILON 0.1f
 
 extern UART_HandleTypeDef huart1;
 
 static void DVL_Task(void *argument);
 static void DVL_ParseByte(uint8_t byte);
 static void DVL_ParseLine(char *line);
+#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
+static uint8_t DVL_ParseStartupAck(char *line);
+#endif
 static void DVL_RestartReceiveFromIsr(void);
 
 static DVL_Data_t dvlData;
 static SemaphoreHandle_t dvlDataMutex;
 static StreamBufferHandle_t dvlRxStream;
 static osThreadId_t dvlTaskHandle;
+static osEventFlagsId_t dvlEventFlags;
 static uint8_t dvlRxByte;
+static uint8_t dvlConsecutiveValidFrames;
+static volatile uint8_t dvlWaitingStartupAck;
+static volatile uint8_t dvlForwardStartupLines;
 
 static const osThreadAttr_t dvlTaskAttributes = {
   .name = "dvl_task",
@@ -48,8 +67,96 @@ BaseType_t DVL_Init(void)
     return pdFAIL;
   }
 
+  dvlEventFlags = osEventFlagsNew(NULL);
+  if (dvlEventFlags == NULL)
+  {
+    return pdFAIL;
+  }
+
   dvlTaskHandle = osThreadNew(DVL_Task, NULL, &dvlTaskAttributes);
   if (dvlTaskHandle == NULL)
+  {
+    return pdFAIL;
+  }
+
+  return pdPASS;
+}
+
+BaseType_t DVL_ConfigureStartup(void)
+{
+  uint32_t flags;
+  const uint8_t startupCommand[] = DVL_STARTUP_COMMAND;
+
+  if (dvlEventFlags == NULL)
+  {
+    return pdFAIL;
+  }
+
+  flags = osEventFlagsWait(dvlEventFlags,
+                           DVL_EVENT_RX_STARTED,
+                           osFlagsWaitAny,
+                           pdMS_TO_TICKS(DVL_RX_START_TIMEOUT_MS));
+  if ((flags & osFlagsError) != 0U)
+  {
+    return pdFAIL;
+  }
+
+  dvlConsecutiveValidFrames = 0U;
+#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
+  (void)osEventFlagsClear(dvlEventFlags, DVL_EVENT_READY | DVL_EVENT_STARTUP_ACK);
+  dvlWaitingStartupAck = 1U;
+  dvlForwardStartupLines = 1U;
+#else
+  (void)osEventFlagsClear(dvlEventFlags, DVL_EVENT_READY);
+  dvlWaitingStartupAck = 0U;
+  dvlForwardStartupLines = 0U;
+#endif
+
+  if (HAL_UART_Transmit(&huart1,
+                        (uint8_t *)startupCommand,
+                        (uint16_t)(sizeof(startupCommand) - 1U),
+                        DVL_STARTUP_TX_TIMEOUT_MS) != HAL_OK)
+  {
+    dvlForwardStartupLines = 0U;
+    dvlWaitingStartupAck = 0U;
+    return pdFAIL;
+  }
+
+#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
+  osDelay(DVL_STARTUP_FORWARD_WINDOW_MS);
+  dvlForwardStartupLines = 0U;
+  dvlWaitingStartupAck = 0U;
+
+  flags = osEventFlagsGet(dvlEventFlags);
+  if ((flags & DVL_EVENT_STARTUP_ACK) == 0U)
+  {
+    Log_printf("[DVL] startup_ack result=timeout expected=ML %.1f\r\n",
+               DVL_STARTUP_ACK_VALUE);
+    return pdFAIL;
+  }
+
+  Log_printf("[DVL] startup_ack result=ok\r\n");
+#else
+  Log_printf("[DVL] startup_ack check=disabled\r\n");
+#endif
+
+  return pdPASS;
+}
+
+BaseType_t DVL_WaitReady(TickType_t timeout_ticks)
+{
+  uint32_t flags;
+
+  if (dvlEventFlags == NULL)
+  {
+    return pdFAIL;
+  }
+
+  flags = osEventFlagsWait(dvlEventFlags,
+                           DVL_EVENT_READY,
+                           osFlagsWaitAny,
+                           timeout_ticks);
+  if ((flags & osFlagsError) != 0U)
   {
     return pdFAIL;
   }
@@ -120,6 +227,7 @@ static void DVL_Task(void *argument)
   {
     osDelay(10U);
   }
+  (void)osEventFlagsSet(dvlEventFlags, DVL_EVENT_RX_STARTED);
 
   for (;;)
   {
@@ -181,11 +289,24 @@ static void DVL_ParseLine(char *line)
   float raw_vz;
   float raw_ve;
   uint8_t raw_status = 0U;
+  uint8_t validFrame;
 
   if ((line == NULL) || (line[0] == '\0'))
   {
     return;
   }
+
+  if (dvlForwardStartupLines != 0U)
+  {
+    Log_printf("[DVLSTARTUP]%s\r\n", line);
+  }
+
+#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
+  if ((dvlWaitingStartupAck != 0U) && (DVL_ParseStartupAck(line) != 0U))
+  {
+    return;
+  }
+#endif
 
   if (strncmp(line, ":BI,", 4) != 0)
   {
@@ -207,6 +328,10 @@ static void DVL_ParseLine(char *line)
     raw_status = (uint8_t)*p;
   }
 
+  validFrame = ((raw_status == (uint8_t)'A') &&
+                (raw_vx != 88888.0f) &&
+                (raw_vy != 88888.0f)) ? 1U : 0U;
+
   if ((dvlDataMutex != NULL) &&
       (xSemaphoreTake(dvlDataMutex, portMAX_DELAY) == pdTRUE))
   {
@@ -223,7 +348,54 @@ static void DVL_ParseLine(char *line)
     dvlData.timestamp = HAL_GetTick();
     xSemaphoreGive(dvlDataMutex);
   }
+
+  if (validFrame != 0U)
+  {
+    if (dvlConsecutiveValidFrames < DVL_STARTUP_VALID_FRAME_COUNT)
+    {
+      dvlConsecutiveValidFrames++;
+    }
+
+    if (dvlConsecutiveValidFrames >= DVL_STARTUP_VALID_FRAME_COUNT)
+    {
+      (void)osEventFlagsSet(dvlEventFlags, DVL_EVENT_READY);
+    }
+  }
+  else
+  {
+    dvlConsecutiveValidFrames = 0U;
+  }
 }
+
+#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
+static uint8_t DVL_ParseStartupAck(char *line)
+{
+  char *p;
+  float ackValue;
+
+  while (*line == ':')
+  {
+    line++;
+  }
+
+  if (strncmp(line, DVL_STARTUP_ACK_PREFIX, strlen(DVL_STARTUP_ACK_PREFIX)) != 0)
+  {
+    return 0U;
+  }
+
+  p = line + strlen(DVL_STARTUP_ACK_PREFIX);
+  ackValue = strtof(p, &p);
+
+  if ((ackValue > (DVL_STARTUP_ACK_VALUE - DVL_STARTUP_ACK_EPSILON)) &&
+      (ackValue < (DVL_STARTUP_ACK_VALUE + DVL_STARTUP_ACK_EPSILON)))
+  {
+    (void)osEventFlagsSet(dvlEventFlags, DVL_EVENT_STARTUP_ACK);
+    return 1U;
+  }
+
+  return 0U;
+}
+#endif
 
 static void DVL_RestartReceiveFromIsr(void)
 {
