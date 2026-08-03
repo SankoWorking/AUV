@@ -26,7 +26,10 @@
 #define DVL_FILTER_RESET_INVALID_FRAME_COUNT 3U
 #define DVL_FILTER_RECAPTURE_FAILURE_COUNT 5U
 
-extern UART_HandleTypeDef huart1;
+extern UART_HandleTypeDef huart5;
+
+#define DVL_UART_HANDLE   huart5
+#define DVL_UART_INSTANCE UART5
 
 static void DVL_Task(void *argument);
 static void DVL_ParseByte(uint8_t byte);
@@ -122,7 +125,7 @@ BaseType_t DVL_ConfigureStartup(void)
   dvlForwardStartupLines = 0U;
 #endif
 
-  if (HAL_UART_Transmit(&huart1,
+  if (HAL_UART_Transmit(&DVL_UART_HANDLE,
                         (uint8_t *)startupCommand,
                         (uint16_t)(sizeof(startupCommand) - 1U),
                         DVL_STARTUP_TX_TIMEOUT_MS) != HAL_OK)
@@ -200,7 +203,7 @@ BaseType_t DVL_GetDataTimeout(DVL_Data_t *data, TickType_t timeout_ticks)
 void DVL_UART_RxCpltCallback(UART_HandleTypeDef *huart,
                              BaseType_t *higher_priority_task_woken)
 {
-  if (huart->Instance == USART1)
+  if (huart->Instance == DVL_UART_INSTANCE)
   {
     BaseType_t localTaskWoken = pdFALSE;
     BaseType_t *taskWoken = (higher_priority_task_woken != NULL) ?
@@ -221,7 +224,7 @@ void DVL_UART_RxCpltCallback(UART_HandleTypeDef *huart,
 
 void DVL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-  if (huart->Instance == USART1)
+  if (huart->Instance == DVL_UART_INSTANCE)
   {
     DVL_RestartReceiveFromIsr();
   }
@@ -233,7 +236,7 @@ static void DVL_Task(void *argument)
 
   (void)argument;
 
-  while (HAL_UART_Receive_IT(&huart1, &dvlRxByte, 1U) != HAL_OK)
+  while (HAL_UART_Receive_IT(&DVL_UART_HANDLE, &dvlRxByte, 1U) != HAL_OK)
   {
     osDelay(10U);
   }
@@ -475,5 +478,5 @@ static uint8_t DVL_ParseStartupAck(char *line)
 
 static void DVL_RestartReceiveFromIsr(void)
 {
-  (void)HAL_UART_Receive_IT(&huart1, &dvlRxByte, 1U);
+  (void)HAL_UART_Receive_IT(&DVL_UART_HANDLE, &dvlRxByte, 1U);
 }

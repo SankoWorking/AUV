@@ -52,9 +52,10 @@ void MemManage_Handler(void);
 void BusFault_Handler(void);
 void UsageFault_Handler(void);
 void DebugMon_Handler(void);
-void TIM15_IRQHandler(void);
-void UART7_IRQHandler(void);
 void USART1_IRQHandler(void);
+void UART5_IRQHandler(void);
+void UART7_IRQHandler(void);
+void TIM15_IRQHandler(void);
 /* USER CODE BEGIN EFP */
 
 /* USER CODE END EFP */

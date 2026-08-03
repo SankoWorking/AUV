@@ -18,8 +18,8 @@ static const osThreadAttr_t testTaskAttributes = {
 static void TestTask(void *argument)
 {
   (void)argument;
-	DVL_FusionState_t nav={0};
-	//DVL_Data_t dvl={0};
+	//DVL_FusionState_t nav={0};
+	DVL_Data_t dvl={0};
   if (Startup_WaitSystemReady(osWaitForever) != pdPASS)
   {
     for (;;)
@@ -30,7 +30,7 @@ static void TestTask(void *argument)
 
   for (;;)
   {
-		
+		/*
 		DVL_Fusion_GetState(&nav);
 		
     Log_printf("[NAV]x_m: %.3f y_m: %.3f vn_mps: %.3f ve_mps: %.3f body_vx_mps: %.3f body_vy_mps: %.3f yaw_deg: %.2f frame: %lu filter_timestamp: %lu integrated: %lu rejected: %lu last_update: %u valid: %u\r\n",
@@ -47,7 +47,7 @@ static void TestTask(void *argument)
                (unsigned long)nav.rejected_count,
                (unsigned int)nav.last_update,
                (unsigned int)nav.velocity_valid);
-		/*
+		*/
 		DVL_GetData(&dvl);
     Log_printf("[DVL]raw_vx: %.2f raw_vy: %.2f filt_vx: %.2f filt_vy: %.2f status: %c invalid: %u filter_fail: %u frame: %lu timestamp: %lu\r\n",
                dvl.raw_vx,
@@ -59,7 +59,7 @@ static void TestTask(void *argument)
                (unsigned int)dvl.filter_failure_count,
                (unsigned long)dvl.frame_count,
                (unsigned long)dvl.timestamp);
-		*/
+		
 		
 		osDelay(150);
   }
