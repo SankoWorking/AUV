@@ -8,17 +8,32 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief  DVL使用的串口
+ */
+extern UART_HandleTypeDef huart5;
+#define DVL_UART_HANDLE   huart5
+#define DVL_UART_INSTANCE UART5
+/**
+ * @brief  DVL事件标志组定义
+ */
+#define DVL_EVENT_RX_STARTED    (1U << 0)
+#define DVL_EVENT_READY         (1U << 1)
+#define DVL_EVENT_STARTUP_ACK   (1U << 2)
+
 #define DVL_RX_STREAM_SIZE      256U
 #define DVL_RX_TASK_CHUNK_SIZE  32U
+// DVL_ParseByte函数中行缓冲区的大小
 #define DVL_LINE_BUFFER_SIZE    96U
 #define DVL_STARTUP_COMMAND     "ML 600,SV 0\r\n"
 #define DVL_STARTUP_ACK_CHECK_ENABLE 0U
 #define DVL_STARTUP_TX_TIMEOUT_MS 100U
+// 将DVL原始文本转发到日志的时间
 #define DVL_STARTUP_FORWARD_WINDOW_MS 10000U
 #define DVL_RX_START_TIMEOUT_MS 2000U
-#define DVL_EVENT_RX_STARTED    (1U << 0)
-#define DVL_EVENT_READY         (1U << 1)
-#define DVL_EVENT_STARTUP_ACK   (1U << 2)
+
+
+
 #define DVL_STARTUP_ACK_PREFIX  "ML "
 #define DVL_STARTUP_ACK_VALUE   600.0f
 #define DVL_STARTUP_ACK_EPSILON 0.1f
@@ -26,10 +41,7 @@
 #define DVL_FILTER_RESET_INVALID_FRAME_COUNT 3U
 #define DVL_FILTER_RECAPTURE_FAILURE_COUNT 5U
 
-extern UART_HandleTypeDef huart5;
 
-#define DVL_UART_HANDLE   huart5
-#define DVL_UART_INSTANCE UART5
 
 static void DVL_Task(void *argument);
 static void DVL_ParseByte(uint8_t byte);
@@ -49,18 +61,32 @@ static StreamBufferHandle_t dvlRxStream;
 static osThreadId_t dvlTaskHandle;
 static osEventFlagsId_t dvlEventFlags;
 static uint8_t dvlRxByte;
+// DVL_ParseLine中的连续有效帧计数，用于在启动阶段判断是否满足启动条件。
 static uint8_t dvlConsecutiveValidFrames;
+// DVL_ParseLine中的连续无效帧计数，用于判断是否重置滤波基准。
 static uint8_t dvlConsecutiveInvalidFrames;
 static uint8_t dvlConsecutiveFilterFailures;
+
+// DVL是否在等待对启动命令的回复
 static volatile uint8_t dvlWaitingStartupAck;
+// 是否把配置阶段收到的DVL原始文本转发到日志
 static volatile uint8_t dvlForwardStartupLines;
 
+/**
+ * @brief DVL串口任务配置结构体
+ */
 static const osThreadAttr_t dvlTaskAttributes = {
   .name = "dvl_task",
   .stack_size = DVL_TASK_STACK_SIZE_BYTES,
   .priority = (osPriority_t)DVL_TASK_PRIORITY,
 };
 
+/**
+ *	@brief  DVL初始化配置。初始化互斥锁，串口流缓冲区
+ *				  事件标志组，创建DVL_Task
+ *	@return pdPass DVL初始化成功
+ *					pdFail DVL初始化失败
+ */
 BaseType_t DVL_Init(void)
 {
   if (dvlTaskHandle != NULL)
@@ -95,6 +121,14 @@ BaseType_t DVL_Init(void)
   return pdPASS;
 }
 
+/**
+ * @brief  通过串口下发指令的方式配置DVL。在DVL串口启动后，向DVL下发一 
+ *				 条配置指令。并根据DVL_STARTUP_ACK_CHECK_ENABLE是否启用，来
+ *				 决定是否等待DVL回传的信息。如果启用DVL_STARTUP_ACK_CHECK_ENABLE
+ *				 ，则当DVL_STARTUP_FORWARD_WINDOW_MS后，会超时失败。
+ * @return pdPASS 配置成功
+ *				 pdFAIL 配置失败
+ */
 BaseType_t DVL_ConfigureStartup(void)
 {
   uint32_t flags;
@@ -177,11 +211,27 @@ BaseType_t DVL_WaitReady(TickType_t timeout_ticks)
   return pdPASS;
 }
 
+/**
+ * @brief  获取当前DVL数据的副本，且不等待互斥锁。内部会调用
+ *				 DVL_GetDataTimeout
+ * 
+ * @param  data 用于存放DVL数据副本的指针
+ * @return pdPASS 成功获取
+ *				 pdFAIL 获取失败
+ */
 BaseType_t DVL_GetData(DVL_Data_t *data)
 {
   return DVL_GetDataTimeout(data, 0U);
 }
 
+/**
+ * @brief  获取当前DVL数据的副本，可以设置等待互斥锁的时间
+ * 
+ * @param  data 用于存放DVL数据副本的指针
+ * @param  timeout_ticks 等待互斥锁的时间
+ * @return pdPASS 成功获取
+ *				 pdFAIL 获取失败
+ */
 BaseType_t DVL_GetDataTimeout(DVL_Data_t *data, TickType_t timeout_ticks)
 {
   if ((data == NULL) || (dvlDataMutex == NULL))
@@ -230,6 +280,12 @@ void DVL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   }
 }
 
+/**
+ * @brief  DVL任务。在dvlRxStream达到阈值时，可以被唤醒，一次性最多搬运
+ *				 DVL_RX_TASK_CHUNK_SIZE个字节，进入DVL_ParseByte进行解析。
+ *
+ * @param  argument未使用
+ */
 static void DVL_Task(void *argument)
 {
   uint8_t rxChunk[DVL_RX_TASK_CHUNK_SIZE];
@@ -257,6 +313,11 @@ static void DVL_Task(void *argument)
   }
 }
 
+/**
+ * @brief  将收到的DVL字节流组成一行一行的DVL文本数据。
+ *
+ * @param  byte DVL串口字节流
+ */
 static void DVL_ParseByte(uint8_t byte)
 {
   static char line[DVL_LINE_BUFFER_SIZE];
@@ -294,6 +355,9 @@ static void DVL_ParseByte(uint8_t byte)
   line[index++] = (char)byte;
 }
 
+/**
+ * @brief  解析一整行DVL文本数据，提取速度和状态，更新dvlData,并判断DVL是否ready
+ */
 static void DVL_ParseLine(char *line)
 {
   char *p;
@@ -310,12 +374,14 @@ static void DVL_ParseLine(char *line)
   {
     return;
   }
-
+	
+	// 判断当前是否属于DVL配置日志转发的状态
   if (dvlForwardStartupLines != 0U)
   {
-    Log_printf("[DVLSTARTUP]%s\r\n", line);
+    Log_printf("[DVL CONFIG]%s\r\n", line);
   }
 
+	// 判断当前是否启用启动DVL ACK检查,启用后将当前行解析为DVL ACK
 #if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
   if ((dvlWaitingStartupAck != 0U) && (DVL_ParseStartupAck(line) != 0U))
   {
@@ -356,10 +422,7 @@ static void DVL_ParseLine(char *line)
     dvlData.raw_vz = raw_vz;
     dvlData.raw_ve = raw_ve;
     dvlData.status = raw_status;
-    if (raw_status != (uint8_t)'A')
-    {
-      dvlData.velocity_invalid_count++;
-    }
+		// 如果当前帧有效，则进行滤波，如果当前帧无效则增加连续无效帧计数
     if (validFrame != 0U)
     {
       dvlConsecutiveInvalidFrames = 0U;
@@ -367,6 +430,7 @@ static void DVL_ParseLine(char *line)
     }
     else
     {
+			dvlData.velocity_invalid_count++;
       if (dvlConsecutiveInvalidFrames < DVL_FILTER_RESET_INVALID_FRAME_COUNT)
       {
         dvlConsecutiveInvalidFrames++;
@@ -385,11 +449,13 @@ static void DVL_ParseLine(char *line)
     xSemaphoreGive(dvlDataMutex);
   }
 
+	//滤波成功则唤醒融合函数
   if (filterUpdated != 0U)
   {
     DVL_Fusion_NotifyFromDvlTask();
   }
 
+	// 在StartupTask任务中会判断DVL_EVENT_READY标志位，以确定当前DVL数据是否稳定可用
   if (validFrame != 0U)
   {
     if (dvlConsecutiveValidFrames < DVL_STARTUP_VALID_FRAME_COUNT)

@@ -11,6 +11,7 @@ extern "C" {
 
 #define DVL_TASK_STACK_SIZE_BYTES (512U * 4U)
 #define DVL_TASK_PRIORITY         osPriorityAboveNormal1
+// DVL启动时需要等待连续有效的帧数。
 #define DVL_STARTUP_VALID_FRAME_COUNT 5U
 
 typedef struct{
@@ -20,7 +21,7 @@ typedef struct{
 	float raw_ve;
 	float vx;
 	float vy;
-	uint8_t status;
+	uint16_t status;
 	uint8_t velocity_invalid_count;
 	uint16_t filter_failure_count;
 	uint32_t frame_count;

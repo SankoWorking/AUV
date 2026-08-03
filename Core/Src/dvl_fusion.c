@@ -15,7 +15,9 @@
 #define DVL_FUSION_MM_S_TO_M_S                0.001f
 #define DVL_FUSION_DEG_TO_RAD                 0.017453292519943295f
 #define DVL_FUSION_SPEED_DEADBAND_MM_S        10.0f
-/* DVL position relative to the rotation center in body frame, unit: meter. */
+/**
+ *	@brief  旋转中心杆臂补偿
+ */
 #define DVL_FUSION_DVL_OFFSET_X_M             0.15f
 #define DVL_FUSION_DVL_OFFSET_Y_M             0.20f
 
@@ -27,12 +29,16 @@ static float lastVnMps;
 static float lastVeMps;
 static float lastBodyVxMmS;
 static float lastBodyVyMmS;
+// DVL_Fusion_Update中用于记录上一次参与融合的DVL帧号
 static uint32_t lastDvlFrameCount;
 static uint32_t lastFilterTimestamp;
 static uint16_t lastFilterFailureCount;
 static uint8_t haveLastVelocity;
 static uint8_t recoverySkipRemaining;
 
+/**
+ *	@brief  融合任务参数配置
+ */
 static const osThreadAttr_t dvlFusionTaskAttributes = {
   .name = "dvl_fusion",
   .stack_size = DVL_FUSION_TASK_STACK_SIZE_BYTES,
@@ -142,6 +148,9 @@ void DVL_Fusion_Reset(float x_m, float y_m)
   recoverySkipRemaining = 0U;
 }
 
+/**
+ * @brief  初始化融合任务，会重置fusionState结构体
+ */
 BaseType_t DVL_Fusion_Task_Init(void)
 {
   if (fusionTaskHandle != NULL)
@@ -160,6 +169,9 @@ BaseType_t DVL_Fusion_Task_Init(void)
   return pdPASS;
 }
 
+/**
+ * @brief  唤醒融合任务的外部接口
+ */
 void DVL_Fusion_NotifyFromDvlTask(void)
 {
   if (fusionTaskHandle == NULL)
@@ -183,6 +195,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
   float jump_vx;
   float jump_vy;
 
+	//获取DVL数据，如果获取失败就标记速度无效并记录失败原因。
   if (DVL_GetData(&dvl) != pdPASS)
   {
     fusionState.velocity_valid = 0U;
@@ -190,14 +203,17 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     return DVL_FUSION_UPDATE_DVL_READ_FAIL;
   }
 
+	//如果DVL帧号不变，本次不积分并记录失败原因
   if (dvl.frame_count == lastDvlFrameCount)
   {
     DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_NO_NEW_DVL);
     return DVL_FUSION_UPDATE_NO_NEW_DVL;
   }
   lastDvlFrameCount = dvl.frame_count;
+	//不加锁？
   fusionState.dvl_frame_count = dvl.frame_count;
 
+	//判断DVL数据是否有效
   if ((dvl.status != (uint8_t)'A') ||
       (dvl.raw_vx == 88888.0f) ||
       (dvl.raw_vy == 88888.0f) ||
@@ -211,6 +227,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     return DVL_FUSION_UPDATE_DVL_INVALID;
   }
 
+	//读取imu数据，如果读取失败会清掉上一帧数据基线
   if (JY901S_GetData(&imu) != pdPASS)
   {
     haveLastVelocity = 0U;
@@ -220,6 +237,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     return DVL_FUSION_UPDATE_IMU_READ_FAIL;
   }
 
+	//判断imu数据是否有效
   if ((imu.angle_valid == 0U) || (imu.gyro_valid == 0U))
   {
     haveLastVelocity = 0U;
@@ -228,18 +246,20 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_IMU_INVALID);
     return DVL_FUSION_UPDATE_IMU_INVALID;
   }
-
+	
+	//将DVL速度补偿到旋转中心
   DVL_Fusion_CompensateLeverArm(dvl.vx * DVL_FUSION_MM_S_TO_M_S,
                                 dvl.vy * DVL_FUSION_MM_S_TO_M_S,
                                 imu.gyro_dps[2],
                                 &body_vx_mps,
                                 &body_vy_mps);
-  DVL_Fusion_BodyToNav(body_vx_mps,
+  //将DVL载体坐标系速度转换到导航坐标系
+	DVL_Fusion_BodyToNav(body_vx_mps,
                        body_vy_mps,
                        imu.angle_deg[2],
                        &vn_mps,
                        &ve_mps);
-
+	//判断滤波失败计数是否发生变化，如果发生变化证明滤波失败，将不进行积分
   if (dvl.filter_failure_count != lastFilterFailureCount)
   {
     lastFilterFailureCount = dvl.filter_failure_count;
@@ -249,6 +269,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
   }
   lastFilterFailureCount = dvl.filter_failure_count;
 
+	//如果DVL之前无效过，恢复后需要跳过几帧
   if (recoverySkipRemaining > 0U)
   {
     recoverySkipRemaining--;
@@ -259,6 +280,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     return DVL_FUSION_UPDATE_RECOVERY_SKIP;
   }
 
+	//判断速度是否位于死区
   if (DVL_Fusion_IsVelocityBelowDeadband(body_vx_mps, body_vy_mps) != 0U)
   {
     body_vx_mps = 0.0f;
@@ -270,8 +292,10 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     return DVL_FUSION_UPDATE_SPEED_DEADBAND;
   }
 
+	//如果存在上一帧有效速度，可以进行积分
   if (haveLastVelocity != 0U)
   {
+		//判断速度跳变是否过大
     jump_vx = DVL_Fusion_AbsFloat(dvl.vx - lastBodyVxMmS);
     jump_vy = DVL_Fusion_AbsFloat(dvl.vy - lastBodyVyMmS);
     if ((jump_vx > DVL_FUSION_MAX_SPEED_JUMP_MM_S) ||
@@ -282,6 +306,7 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
       return DVL_FUSION_UPDATE_SPEED_JUMP;
     }
 
+		//判断时间间隔是否合法
     dt_ms = dvl.filter_timestamp - lastFilterTimestamp;
     if ((dt_ms < DVL_FUSION_MIN_DT_MS) || (dt_ms > DVL_FUSION_MAX_DT_MS))
     {
@@ -314,6 +339,10 @@ void DVL_Fusion_GetState(DVL_FusionState_t *state)
   *state = fusionState;
 }
 
+/**
+ * @brief  在系统初始化完成后，重置DVL_FusionState结构体，清空自身线程标志位
+ * 				 等待DVL唤醒再进行工作。
+ */
 static void DVL_Fusion_Task(void *argument)
 {
   (void)argument;
