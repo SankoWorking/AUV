@@ -14,6 +14,7 @@
 #define DVL_FUSION_MAX_DT_MS                  400U
 #define DVL_FUSION_MM_S_TO_M_S                0.001f
 #define DVL_FUSION_DEG_TO_RAD                 0.017453292519943295f
+#define DVL_FUSION_SPEED_DEADBAND_MM_S        10.0f
 /* DVL position relative to the rotation center in body frame, unit: meter. */
 #define DVL_FUSION_DVL_OFFSET_X_M             0.15f
 #define DVL_FUSION_DVL_OFFSET_Y_M             0.20f
@@ -48,7 +49,8 @@ static void DVL_Fusion_SetLastUpdate(DVL_FusionUpdate_t update)
   fusionState.last_update = update;
   if ((update != DVL_FUSION_UPDATE_INTEGRATED) &&
       (update != DVL_FUSION_UPDATE_BASELINE_SET) &&
-      (update != DVL_FUSION_UPDATE_NO_NEW_DVL))
+      (update != DVL_FUSION_UPDATE_NO_NEW_DVL) &&
+      (update != DVL_FUSION_UPDATE_SPEED_DEADBAND))
   {
     fusionState.rejected_count++;
   }
@@ -78,6 +80,15 @@ static void DVL_Fusion_CompensateLeverArm(float dvl_vx_mps,
 
   *body_vx_mps = dvl_vx_mps + (yaw_rate_rad_s * DVL_FUSION_DVL_OFFSET_Y_M);
   *body_vy_mps = dvl_vy_mps - (yaw_rate_rad_s * DVL_FUSION_DVL_OFFSET_X_M);
+}
+
+static uint8_t DVL_Fusion_IsVelocityBelowDeadband(float body_vx_mps,
+                                                  float body_vy_mps)
+{
+  float threshold_mps = DVL_FUSION_SPEED_DEADBAND_MM_S * DVL_FUSION_MM_S_TO_M_S;
+  float speed_sq = (body_vx_mps * body_vx_mps) + (body_vy_mps * body_vy_mps);
+
+  return (speed_sq < (threshold_mps * threshold_mps)) ? 1U : 0U;
 }
 
 static void DVL_Fusion_UpdateVelocityState(const DVL_Data_t *dvl,
@@ -246,6 +257,17 @@ DVL_FusionUpdate_t DVL_Fusion_Update(void)
     DVL_Fusion_UpdateVelocityState(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
     DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_RECOVERY_SKIP);
     return DVL_FUSION_UPDATE_RECOVERY_SKIP;
+  }
+
+  if (DVL_Fusion_IsVelocityBelowDeadband(body_vx_mps, body_vy_mps) != 0U)
+  {
+    body_vx_mps = 0.0f;
+    body_vy_mps = 0.0f;
+    vn_mps = 0.0f;
+    ve_mps = 0.0f;
+    DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
+    DVL_Fusion_SetLastUpdate(DVL_FUSION_UPDATE_SPEED_DEADBAND);
+    return DVL_FUSION_UPDATE_SPEED_DEADBAND;
   }
 
   if (haveLastVelocity != 0U)
