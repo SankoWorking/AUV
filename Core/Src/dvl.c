@@ -37,19 +37,12 @@ extern UART_HandleTypeDef huart5;
 #define DVL_STARTUP_ACK_PREFIX  "ML "
 #define DVL_STARTUP_ACK_VALUE   600.0f
 #define DVL_STARTUP_ACK_EPSILON 0.1f
-#define DVL_FILTER_JUMP_THRESHOLD_MM_S 50.0f
-#define DVL_FILTER_RESET_INVALID_FRAME_COUNT 3U
-#define DVL_FILTER_RECAPTURE_FAILURE_COUNT 5U
 
 
 
 static void DVL_Task(void *argument);
 static void DVL_ParseByte(uint8_t byte);
 static void DVL_ParseLine(char *line);
-static uint8_t DVL_UpdateVelocityFilter(float raw_vx,
-                                        float raw_vy,
-                                        uint32_t timestamp);
-static float DVL_AbsFloat(float value);
 #if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
 static uint8_t DVL_ParseStartupAck(char *line);
 #endif
@@ -63,10 +56,6 @@ static osEventFlagsId_t dvlEventFlags;
 static uint8_t dvlRxByte;
 // DVL_ParseLine中的连续有效帧计数，用于在启动阶段判断是否满足启动条件。
 static uint8_t dvlConsecutiveValidFrames;
-// DVL_ParseLine中的连续无效帧计数，用于判断是否重置滤波基准。
-static uint8_t dvlConsecutiveInvalidFrames;
-static uint8_t dvlConsecutiveFilterFailures;
-
 // DVL是否在等待对启动命令的回复
 static volatile uint8_t dvlWaitingStartupAck;
 // 是否把配置阶段收到的DVL原始文本转发到日志
@@ -367,7 +356,8 @@ static void DVL_ParseLine(char *line)
   float raw_ve;
   uint8_t raw_status = 0U;
   uint8_t validFrame;
-  uint8_t filterUpdated = 0U;
+  uint8_t haveDvlSnapshot = 0U;
+  DVL_Data_t dvlSnapshot;
   uint32_t now;
 
   if ((line == NULL) || (line[0] == '\0'))
@@ -422,37 +412,17 @@ static void DVL_ParseLine(char *line)
     dvlData.raw_vz = raw_vz;
     dvlData.raw_ve = raw_ve;
     dvlData.status = raw_status;
-		// 如果当前帧有效，则进行滤波，如果当前帧无效则增加连续无效帧计数
-    if (validFrame != 0U)
-    {
-      dvlConsecutiveInvalidFrames = 0U;
-      filterUpdated = DVL_UpdateVelocityFilter(raw_vx, raw_vy, now);
-    }
-    else
-    {
-			dvlData.velocity_invalid_count++;
-      if (dvlConsecutiveInvalidFrames < DVL_FILTER_RESET_INVALID_FRAME_COUNT)
-      {
-        dvlConsecutiveInvalidFrames++;
-      }
-
-      if (dvlConsecutiveInvalidFrames >= DVL_FILTER_RESET_INVALID_FRAME_COUNT)
-      {
-        dvlData.vx = 0.0f;
-        dvlData.vy = 0.0f;
-        dvlData.filter_timestamp = 0U;
-        dvlConsecutiveFilterFailures = 0U;
-      }
-    }
     dvlData.frame_count++;
     dvlData.timestamp = now;
+    dvlSnapshot = dvlData;
+    haveDvlSnapshot = 1U;
     xSemaphoreGive(dvlDataMutex);
   }
 
-	//滤波成功则唤醒融合函数
-  if (filterUpdated != 0U)
+	// 每个DVL帧都提交给融合任务，融合层负责失锁处理和运动学滤波。
+  if (haveDvlSnapshot != 0U)
   {
-    DVL_Fusion_NotifyFromDvlTask();
+    (void)DVL_Fusion_SubmitDvlData(&dvlSnapshot);
   }
 
 	// 在StartupTask任务中会判断DVL_EVENT_READY标志位，以确定当前DVL数据是否稳定可用
@@ -473,45 +443,6 @@ static void DVL_ParseLine(char *line)
     dvlConsecutiveValidFrames = 0U;
   }
 }
-
-static uint8_t DVL_UpdateVelocityFilter(float raw_vx,
-                                        float raw_vy,
-                                        uint32_t timestamp)
-{
-  if (dvlData.filter_timestamp != 0U)
-  {
-    float deltaVx = DVL_AbsFloat(raw_vx - dvlData.vx);
-    float deltaVy = DVL_AbsFloat(raw_vy - dvlData.vy);
-
-    if ((deltaVx > DVL_FILTER_JUMP_THRESHOLD_MM_S) ||
-        (deltaVy > DVL_FILTER_JUMP_THRESHOLD_MM_S))
-    {
-      dvlData.filter_failure_count++;
-      if (dvlConsecutiveFilterFailures < DVL_FILTER_RECAPTURE_FAILURE_COUNT)
-      {
-        dvlConsecutiveFilterFailures++;
-      }
-
-      if (dvlConsecutiveFilterFailures < DVL_FILTER_RECAPTURE_FAILURE_COUNT)
-      {
-        return 0U;
-      }
-    }
-  }
-
-  dvlData.vx = raw_vx;
-  dvlData.vy = raw_vy;
-  dvlData.filter_timestamp = timestamp;
-  dvlConsecutiveFilterFailures = 0U;
-
-  return 1U;
-}
-
-static float DVL_AbsFloat(float value)
-{
-  return (value < 0.0f) ? -value : value;
-}
-
 #if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
 static uint8_t DVL_ParseStartupAck(char *line)
 {

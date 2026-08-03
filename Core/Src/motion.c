@@ -186,9 +186,11 @@ static BaseType_t Motion_TurnRelative(float relative_deg)
         (Motion_AbsFloat(yawDelta) >= MOTION_TURN_PROGRESS_DEADBAND_DEG))
     {
       progressDirection = (yawDelta >= 0.0f) ? 1.0f : -1.0f;
+			/*
       Log_printf("[MOTION] phase=turn_detect_dir yaw_delta=%.2f progress_dir=%.0f\r\n",
                  yawDelta,
                  progressDirection);
+			*/
     }
 
     if (progressDirection != 0.0f)

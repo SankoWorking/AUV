@@ -48,9 +48,9 @@ class NavSample:
     frame: int = 0
     filter_timestamp: int = 0
     integrated: int = 0
-    rejected: int = 0
-    last_update: int = 0
-    valid: int = 0
+    invalid: int = 0
+    filter_fail: int = 0
+    consecutive_invalid: int = 0
 
 
 def parse_nav_line(line: str) -> Optional[NavSample]:
@@ -78,9 +78,9 @@ def parse_nav_line(line: str) -> Optional[NavSample]:
         frame=int(fields.get("frame", 0.0)),
         filter_timestamp=int(fields.get("filter_timestamp", 0.0)),
         integrated=int(fields.get("integrated", 0.0)),
-        rejected=int(fields.get("rejected", 0.0)),
-        last_update=int(fields.get("last_update", 0.0)),
-        valid=int(fields.get("valid", 0.0)),
+        invalid=int(fields.get("invalid", 0.0)),
+        filter_fail=int(fields.get("filter_fail", 0.0)),
+        consecutive_invalid=int(fields.get("consecutive_invalid", 0.0)),
     )
 
 
@@ -127,9 +127,9 @@ def write_csv_header(csv_writer: csv.writer) -> None:
             "frame",
             "filter_timestamp",
             "integrated",
-            "rejected",
-            "last_update",
-            "valid",
+            "invalid",
+            "filter_fail",
+            "consecutive_invalid",
         ]
     )
 
@@ -148,9 +148,9 @@ def write_csv_sample(csv_writer: csv.writer, sample: NavSample) -> None:
             sample.frame,
             sample.filter_timestamp,
             sample.integrated,
-            sample.rejected,
-            sample.last_update,
-            sample.valid,
+            sample.invalid,
+            sample.filter_fail,
+            sample.consecutive_invalid,
         ]
     )
 
@@ -241,13 +241,14 @@ def run_plot(args: argparse.Namespace) -> int:
         line_plot.set_data(xs, ys)
         current_plot.set_data([latest.x_m], [latest.y_m])
         status_text.set_text(
-            "x={:.3f} m  y={:.3f} m  yaw={:.2f} deg  frame={}  valid={}  update={}".format(
+            "x={:.3f} m  y={:.3f} m  yaw={:.2f} deg  frame={}  invalid={}  filter_fail={}  consecutive_invalid={}".format(
                 latest.x_m,
                 latest.y_m,
                 latest.yaw_deg,
                 latest.frame,
-                latest.valid,
-                latest.last_update,
+                latest.invalid,
+                latest.filter_fail,
+                latest.consecutive_invalid,
             )
         )
         set_equal_axes(ax, xs, ys)
