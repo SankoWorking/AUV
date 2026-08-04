@@ -26,6 +26,14 @@
 #define DVL_FUSION_HARD_JUMP_M_S              1.50f
 #define DVL_FUSION_MOTION_REJECT_LIMIT        3U
 
+/**
+ * @brief  融合任务在计算时储存中间数据时用到的结构体。
+ * 
+ * invalid_velocity_count 总计出现DVL失锁的次数
+ * consecutive_invalid 是否出现连续失锁
+ * consecutive_invalid_count 出现连续失锁的次数统计
+ * 
+ */
 typedef struct
 {
   uint32_t invalid_velocity_count;
@@ -33,7 +41,7 @@ typedef struct
   float last_filter_vx;
   float last_filter_vy;
   uint32_t filter_timestamp_ms;
-  uint8_t consecutive_invalid;
+  uint8_t consecutive_invalid; 
   uint32_t consecutive_invalid_count;
 	uint32_t processed_dvl_frame_count;
 } DVL_FusionCalcState_t;
@@ -47,7 +55,6 @@ static osThreadId_t fusionTaskHandle;
 static QueueHandle_t fusionDvlQueue;
 static float lastVnMps;
 static float lastVeMps;
-//static uint32_t lastDvlFrameCount;
 static uint8_t consecutiveMotionRejects;
 static uint8_t haveLastVelocity;
 
@@ -192,24 +199,28 @@ static uint8_t DVL_Fusion_IsDvlVelocityValid(const DVL_Data_t *dvl)
           (dvl->raw_vx != 88888.0f) &&
           (dvl->raw_vy != 88888.0f)) ? 1U : 0U;
 }
-
+/**
+ * @brief  出现DVL失锁后,递增失锁总数与连续失锁计数。连续失锁3帧后，进入连续失锁状态。
+ *				 后续会触发连续失锁恢复。同时清零积分基准，清零滤波基准。最后更新FusionState
+ *				 相关计数器。
+ *
+ * @param dvl dvl数据快照
+ */
 static void DVL_Fusion_HandleDvlLost(const DVL_Data_t *dvl)
 {
-  if (fusionCalcState.invalid_velocity_count < 0xFFFFFFFFU)
-  {
-    fusionCalcState.invalid_velocity_count++;
-  }
+  fusionCalcState.consecutive_invalid_count++;
+	fusionCalcState.invalid_velocity_count++;
 
   fusionCalcState.consecutive_valid_count = 0U;
-  haveLastVelocity = 0U;
-  fusionCalcState.filter_timestamp_ms = 0U;
-  consecutiveMotionRejects = 0U;
 
-  if ((fusionCalcState.invalid_velocity_count >= DVL_FUSION_LOST_FRAME_THRESHOLD) &&
+  if ((fusionCalcState.consecutive_invalid_count >= DVL_FUSION_LOST_FRAME_THRESHOLD) &&
       (fusionCalcState.consecutive_invalid == 0U))
   {
     fusionCalcState.consecutive_invalid = 1U;
     fusionCalcState.consecutive_invalid_count++;
+		haveLastVelocity = 0U;
+		fusionCalcState.filter_timestamp_ms = 0U;
+		consecutiveMotionRejects = 0U;
   }
 
   DVL_Fusion_PublishCounters(dvl->frame_count);
@@ -394,51 +405,49 @@ BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
   uint32_t dt_ms;
   float dt_s;
 
+	//防御
   if (dvl_snapshot == NULL)
   {
     return pdFAIL;
   }
   dvl = *dvl_snapshot;
 
+	//防御
   if (dvl.frame_count == fusionCalcState.processed_dvl_frame_count)
   {
     return pdFAIL;
   }
   fusionCalcState.processed_dvl_frame_count = dvl.frame_count;
-  DVL_Fusion_PublishCounters(dvl.frame_count);
-
+	
+	//判断DVL是否失锁
   if (DVL_Fusion_IsDvlVelocityValid(&dvl) == 0U)
   {
     DVL_Fusion_HandleDvlLost(&dvl);
     return pdFAIL;
   }
-
-  if (fusionCalcState.consecutive_invalid != 0U)
-  {
-    fusionCalcState.invalid_velocity_count = 0U;
-    if (fusionCalcState.consecutive_valid_count < 255U)
-    {
-      fusionCalcState.consecutive_valid_count++;
-    }
+	//DVL连续失锁后的状态恢复
+  if (fusionCalcState.consecutive_invalid != 0U){
+    fusionCalcState.consecutive_invalid_count = 0U;
+    
+    fusionCalcState.consecutive_valid_count++;
 
     if (fusionCalcState.consecutive_valid_count < DVL_FUSION_REACQUIRE_VALID_COUNT)
     {
       DVL_Fusion_PublishCounters(dvl.frame_count);
       return pdFAIL;
     }
-  }
-  else
-  {
-    fusionCalcState.invalid_velocity_count = 0U;
+  }else{
+    fusionCalcState.consecutive_invalid_count = 0U;
     fusionCalcState.consecutive_valid_count = 0U;
   }
 
-  DVL_Fusion_PublishCounters(dvl.frame_count);
+  
 
   if (DVL_Fusion_ReadValidImu(&imu, dvl.timestamp) != pdPASS)
   {
     haveLastVelocity = 0U;
     fusionCalcState.consecutive_valid_count = 0U;
+		DVL_Fusion_PublishCounters(dvl.frame_count);
     return pdFAIL;
   }
 

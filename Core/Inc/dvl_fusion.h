@@ -23,13 +23,14 @@ typedef struct
   float body_vy_mps;
   float yaw_deg;
   uint32_t dvl_frame_count;
+	uint32_t invalid_velocity_count;
+	uint32_t consecutive_invalid_count;
+	
   uint32_t imu_invalid_count;
   uint32_t imu_timeout_count;
   uint32_t dvl_filter_timestamp;
   uint32_t integrated_count;
-  uint32_t invalid_velocity_count;
   uint32_t filter_failure_count;
-  uint32_t consecutive_invalid_count;
 } DVL_FusionState_t;
 
 void DVL_Fusion_Reset(float x_m, float y_m);
