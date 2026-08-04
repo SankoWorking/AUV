@@ -28,18 +28,14 @@
 
 typedef struct
 {
-  float raw_vx;
-  float raw_vy;
-  float raw_ve;
-  uint8_t status;
   uint32_t invalid_velocity_count;
   uint8_t consecutive_valid_count;
-  uint32_t dvl_timestamp_ms;
   float last_filter_vx;
   float last_filter_vy;
   uint32_t filter_timestamp_ms;
   uint8_t consecutive_invalid;
   uint32_t consecutive_invalid_count;
+	uint32_t processed_dvl_frame_count;
 } DVL_FusionCalcState_t;
 
 static void DVL_Fusion_Task(void *argument);
@@ -51,7 +47,7 @@ static osThreadId_t fusionTaskHandle;
 static QueueHandle_t fusionDvlQueue;
 static float lastVnMps;
 static float lastVeMps;
-static uint32_t lastDvlFrameCount;
+//static uint32_t lastDvlFrameCount;
 static uint8_t consecutiveMotionRejects;
 static uint8_t haveLastVelocity;
 
@@ -197,15 +193,6 @@ static uint8_t DVL_Fusion_IsDvlVelocityValid(const DVL_Data_t *dvl)
           (dvl->raw_vy != 88888.0f)) ? 1U : 0U;
 }
 
-static void DVL_Fusion_CaptureDvlSnapshot(const DVL_Data_t *dvl)
-{
-  fusionCalcState.raw_vx = dvl->raw_vx;
-  fusionCalcState.raw_vy = dvl->raw_vy;
-  fusionCalcState.raw_ve = dvl->raw_ve;
-  fusionCalcState.status = dvl->status;
-  fusionCalcState.dvl_timestamp_ms = dvl->timestamp;
-}
-
 static void DVL_Fusion_HandleDvlLost(const DVL_Data_t *dvl)
 {
   if (fusionCalcState.invalid_velocity_count < 0xFFFFFFFFU)
@@ -346,7 +333,6 @@ void DVL_Fusion_Reset(float x_m, float y_m)
   memset(&fusionCalcState, 0, sizeof(fusionCalcState));
   lastVnMps = 0.0f;
   lastVeMps = 0.0f;
-  lastDvlFrameCount = 0U;
   consecutiveMotionRejects = 0U;
   haveLastVelocity = 0U;
 }
@@ -414,12 +400,11 @@ BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
   }
   dvl = *dvl_snapshot;
 
-  if (dvl.frame_count == lastDvlFrameCount)
+  if (dvl.frame_count == fusionCalcState.processed_dvl_frame_count)
   {
     return pdFAIL;
   }
-  lastDvlFrameCount = dvl.frame_count;
-  DVL_Fusion_CaptureDvlSnapshot(&dvl);
+  fusionCalcState.processed_dvl_frame_count = dvl.frame_count;
   DVL_Fusion_PublishCounters(dvl.frame_count);
 
   if (DVL_Fusion_IsDvlVelocityValid(&dvl) == 0U)
