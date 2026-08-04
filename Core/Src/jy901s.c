@@ -256,6 +256,7 @@ static void JY901S_ParseFrame(const uint8_t *frame)
       jy901sData.gyro_dps[0] = ((float)x / 32768.0f) * 2000.0f;
       jy901sData.gyro_dps[1] = ((float)y / 32768.0f) * 2000.0f;
       jy901sData.gyro_dps[2] = ((float)z / 32768.0f) * 2000.0f;
+      jy901sData.gyro_timestamp_ms = timestamp;
       jy901sData.gyro_valid = 1U;
       break;
 
@@ -263,6 +264,7 @@ static void JY901S_ParseFrame(const uint8_t *frame)
       jy901sData.angle_deg[0] = ((float)x / 32768.0f) * 180.0f;
       jy901sData.angle_deg[1] = ((float)y / 32768.0f) * 180.0f;
       jy901sData.angle_deg[2] = ((float)z / 32768.0f) * 180.0f;
+      jy901sData.angle_timestamp_ms = timestamp;
       jy901sData.angle_valid = 1U;
       break;
 

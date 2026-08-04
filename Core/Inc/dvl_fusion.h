@@ -17,20 +17,22 @@ typedef struct
 {
   float x_m;
   float y_m;
+	//这个四个数据似乎没什么意义
   float vn_mps;
   float ve_mps;
   float body_vx_mps;
   float body_vy_mps;
+	//这四个数据似乎没什么意义
   float yaw_deg;
   uint32_t dvl_frame_count;
 	uint32_t invalid_velocity_count;
-	uint32_t consecutive_invalid_count;
 	
   uint32_t imu_invalid_count;
   uint32_t imu_timeout_count;
-  uint32_t dvl_filter_timestamp;
+  uint32_t nav_timestamp_ms;
   uint32_t integrated_count;
   uint32_t filter_failure_count;
+	uint32_t filter_timeout_count;
 } DVL_FusionState_t;
 
 void DVL_Fusion_Reset(float x_m, float y_m);

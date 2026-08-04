@@ -54,7 +54,6 @@ static StreamBufferHandle_t dvlRxStream;
 static osThreadId_t dvlTaskHandle;
 static osEventFlagsId_t dvlEventFlags;
 static uint8_t dvlRxByte;
-// DVL_ParseLine中的连续有效帧计数，用于在启动阶段判断是否满足启动条件。
 static uint8_t dvlConsecutiveValidFrames;
 // DVL是否在等待对启动命令的回复
 static volatile uint8_t dvlWaitingStartupAck;

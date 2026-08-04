@@ -10,7 +10,7 @@
 #include <string.h>
 
 #define DVL_FUSION_DVL_QUEUE_LENGTH           1U
-#define DVL_FUSION_MIN_DT_MS                  100U
+#define DVL_FUSION_MIN_DT_MS                  50U
 #define DVL_FUSION_MAX_DT_MS                  400U
 #define DVL_FUSION_MM_S_TO_M_S                0.001f
 #define DVL_FUSION_DEG_TO_RAD                 0.017453292519943295f
@@ -44,6 +44,10 @@ typedef struct
   uint8_t consecutive_invalid; 
   uint32_t consecutive_invalid_count;
 	uint32_t processed_dvl_frame_count;
+	uint32_t imu_invalid_count;
+	uint32_t imu_timeout_count;
+	uint32_t filter_failure_count;
+	uint32_t filter_timeout_count;
 } DVL_FusionCalcState_t;
 
 static void DVL_Fusion_Task(void *argument);
@@ -82,44 +86,6 @@ static void DVL_Fusion_UnlockState(void)
   }
 }
 
-static void DVL_Fusion_PublishCounters(uint32_t dvl_frame_count)
-{
-  if (DVL_Fusion_LockState(portMAX_DELAY) == pdTRUE)
-  {
-    fusionState.dvl_frame_count = dvl_frame_count;
-    fusionState.invalid_velocity_count = fusionCalcState.invalid_velocity_count;
-    fusionState.consecutive_invalid_count = fusionCalcState.consecutive_invalid_count;
-    DVL_Fusion_UnlockState();
-  }
-}
-
-static void DVL_Fusion_IncrementImuInvalid(void)
-{
-  if (DVL_Fusion_LockState(portMAX_DELAY) == pdTRUE)
-  {
-    fusionState.imu_invalid_count++;
-    DVL_Fusion_UnlockState();
-  }
-}
-
-static void DVL_Fusion_IncrementImuTimeout(void)
-{
-  if (DVL_Fusion_LockState(portMAX_DELAY) == pdTRUE)
-  {
-    fusionState.imu_timeout_count++;
-    DVL_Fusion_UnlockState();
-  }
-}
-
-static void DVL_Fusion_IncrementFilterFailure(void)
-{
-  if (DVL_Fusion_LockState(portMAX_DELAY) == pdTRUE)
-  {
-    fusionState.filter_failure_count++;
-    DVL_Fusion_UnlockState();
-  }
-}
-
 static void DVL_Fusion_PublishKinematics(const DVL_Data_t *dvl,
                                          const JY901S_Data_t *imu,
                                          float body_vx_mps,
@@ -136,6 +102,7 @@ static void DVL_Fusion_PublishKinematics(const DVL_Data_t *dvl,
       fusionState.x_m += 0.5f * (lastVnMps + vn_mps) * dt_s;
       fusionState.y_m += 0.5f * (lastVeMps + ve_mps) * dt_s;
       fusionState.integrated_count++;
+      fusionState.nav_timestamp_ms = dvl->timestamp;
     }
 
     fusionState.vn_mps = vn_mps;
@@ -144,13 +111,18 @@ static void DVL_Fusion_PublishKinematics(const DVL_Data_t *dvl,
     fusionState.body_vy_mps = body_vy_mps;
     fusionState.yaw_deg = imu->angle_deg[2];
     fusionState.dvl_frame_count = dvl->frame_count;
-    fusionState.dvl_filter_timestamp = fusionCalcState.filter_timestamp_ms;
     fusionState.invalid_velocity_count = fusionCalcState.invalid_velocity_count;
-    fusionState.consecutive_invalid_count = fusionCalcState.consecutive_invalid_count;
+		fusionState.imu_invalid_count = fusionCalcState.imu_invalid_count;
+		fusionState.imu_timeout_count = fusionCalcState.imu_timeout_count;
+		fusionState.filter_failure_count = fusionCalcState.filter_failure_count;
+		fusionState.filter_timeout_count = fusionCalcState.filter_timeout_count;
     DVL_Fusion_UnlockState();
   }
 }
 
+/*
+ * @brief  将载体坐标系速度转换到导航系
+ */
 static void DVL_Fusion_BodyToNav(float body_vx_mps,
                                  float body_vy_mps,
                                  float yaw_deg,
@@ -164,6 +136,10 @@ static void DVL_Fusion_BodyToNav(float body_vx_mps,
   *vn_mps = (c * body_vx_mps) - (s * body_vy_mps);
   *ve_mps = (s * body_vx_mps) + (c * body_vy_mps);
 }
+
+/**
+ * @brief 杆臂补偿
+ */
 
 static void DVL_Fusion_CompensateLeverArm(float dvl_vx_mps,
                                           float dvl_vy_mps,
@@ -217,13 +193,11 @@ static void DVL_Fusion_HandleDvlLost(const DVL_Data_t *dvl)
       (fusionCalcState.consecutive_invalid == 0U))
   {
     fusionCalcState.consecutive_invalid = 1U;
-    fusionCalcState.consecutive_invalid_count++;
+		
 		haveLastVelocity = 0U;
 		fusionCalcState.filter_timestamp_ms = 0U;
 		consecutiveMotionRejects = 0U;
   }
-
-  DVL_Fusion_PublishCounters(dvl->frame_count);
 }
 
 static BaseType_t DVL_Fusion_FilterMotion(float *body_vx_mps,
@@ -280,20 +254,22 @@ static BaseType_t DVL_Fusion_ReadValidImu(JY901S_Data_t *imu,
 {
   if (JY901S_GetData(imu) != pdPASS)
   {
-    DVL_Fusion_IncrementImuInvalid();
+    fusionCalcState.imu_invalid_count++;
     return pdFAIL;
   }
 
   if ((imu->angle_valid == 0U) || (imu->gyro_valid == 0U))
   {
-    DVL_Fusion_IncrementImuInvalid();
+    fusionCalcState.imu_invalid_count++;;
     return pdFAIL;
   }
 
-  if (DVL_Fusion_TickAbsDiff(dvl_timestamp_ms, imu->timestamp_ms) >
-      DVL_FUSION_IMU_SYNC_THRESHOLD_MS)
+  if ((DVL_Fusion_TickAbsDiff(dvl_timestamp_ms, imu->gyro_timestamp_ms) >
+       DVL_FUSION_IMU_SYNC_THRESHOLD_MS) ||
+      (DVL_Fusion_TickAbsDiff(dvl_timestamp_ms, imu->angle_timestamp_ms) >
+       DVL_FUSION_IMU_SYNC_THRESHOLD_MS))
   {
-    DVL_Fusion_IncrementImuTimeout();
+    fusionCalcState.imu_timeout_count++;;
     return pdFAIL;
   }
 
@@ -433,7 +409,6 @@ BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
 
     if (fusionCalcState.consecutive_valid_count < DVL_FUSION_REACQUIRE_VALID_COUNT)
     {
-      DVL_Fusion_PublishCounters(dvl.frame_count);
       return pdFAIL;
     }
   }else{
@@ -441,22 +416,22 @@ BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
     fusionCalcState.consecutive_valid_count = 0U;
   }
 
-  
-
+	//没有出现过读取IMU失败的情况，先不考虑这里的逻辑。
   if (DVL_Fusion_ReadValidImu(&imu, dvl.timestamp) != pdPASS)
   {
     haveLastVelocity = 0U;
     fusionCalcState.consecutive_valid_count = 0U;
-		DVL_Fusion_PublishCounters(dvl.frame_count);
     return pdFAIL;
   }
 
+	//杆臂补偿
   DVL_Fusion_CompensateLeverArm(dvl.raw_vx * DVL_FUSION_MM_S_TO_M_S,
                                 dvl.raw_vy * DVL_FUSION_MM_S_TO_M_S,
                                 imu.gyro_dps[2],
                                 &body_vx_mps,
                                 &body_vy_mps);
 
+	//从连续失锁中恢复后，先恢复积分标准
   if (fusionCalcState.consecutive_invalid != 0U)
   {
     DVL_Fusion_BodyToNav(body_vx_mps,
@@ -476,10 +451,10 @@ BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
     DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
     fusionCalcState.consecutive_invalid = 0U;
     fusionCalcState.consecutive_valid_count = 0U;
-    DVL_Fusion_PublishCounters(dvl.frame_count);
     return pdFAIL;
   }
 
+	//失去积分标准后重新建立积分标准
   if (haveLastVelocity == 0U)
   {
     DVL_Fusion_BodyToNav(body_vx_mps,
@@ -500,6 +475,7 @@ BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
     return pdFAIL;
   }
 
+	//检查当前帧滤波超时
   dt_ms = dvl.timestamp - fusionCalcState.filter_timestamp_ms;
   if ((dt_ms < DVL_FUSION_MIN_DT_MS) || (dt_ms > DVL_FUSION_MAX_DT_MS))
   {
@@ -508,17 +484,19 @@ BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
                          imu.angle_deg[2],
                          &vn_mps,
                          &ve_mps);
+		fusionCalcState.filter_timeout_count++;
     DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
     return pdFAIL;
   }
 
+	//滤波
   dt_s = (float)dt_ms / 1000.0f;
   if (DVL_Fusion_FilterMotion(&body_vx_mps,
                               &body_vy_mps,
                               imu.gyro_dps[2],
                               dt_s) != pdPASS)
   {
-    DVL_Fusion_IncrementFilterFailure();
+    fusionCalcState.filter_failure_count++;
     if (consecutiveMotionRejects >= DVL_FUSION_MOTION_REJECT_LIMIT)
     {
       haveLastVelocity = 0U;

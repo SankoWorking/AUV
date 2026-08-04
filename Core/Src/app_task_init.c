@@ -33,7 +33,7 @@ static void TestTask(void *argument)
 
 		DVL_Fusion_GetState(&nav);
 		
-    Log_printf("[NAV]x_m: %.3f y_m: %.3f vn_mps: %.3f ve_mps: %.3f body_vx_mps: %.3f body_vy_mps: %.3f yaw_deg: %.2f frame: %lu filter_timestamp: %lu integrated: %lu invalid: %lu filter_fail: %lu consecutive_invalid: %lu imu_invalid: %lu imu_timeout: %lu\r\n",
+    Log_printf("[NAV]x_m: %.3f y_m: %.3f vn_mps: %.3f ve_mps: %.3f body_vx_mps: %.3f body_vy_mps: %.3f yaw_deg: %.2f frame: %lu nav_timestamp: %lu integrated: %lu invalid: %lu filter_fail: %lu filter_timeout: %lu imu_invalid: %lu imu_timeout: %lu\r\n",
                nav.x_m,
                nav.y_m,
                nav.vn_mps,
@@ -42,11 +42,11 @@ static void TestTask(void *argument)
                nav.body_vy_mps,
                nav.yaw_deg,
                (unsigned long)nav.dvl_frame_count,
-               (unsigned long)nav.dvl_filter_timestamp,
+               (unsigned long)nav.nav_timestamp_ms,
                (unsigned long)nav.integrated_count,
                (unsigned long)nav.invalid_velocity_count,
                (unsigned long)nav.filter_failure_count,
-               (unsigned long)nav.consecutive_invalid_count,
+               (unsigned long)nav.filter_timeout_count,
                (unsigned long)nav.imu_invalid_count,
                (unsigned long)nav.imu_timeout_count);
 /*

@@ -50,7 +50,9 @@ class NavSample:
     integrated: int = 0
     invalid: int = 0
     filter_fail: int = 0
-    consecutive_invalid: int = 0
+    filter_timeout: int = 0
+    imu_invalid: int = 0
+    imu_timeout: int = 0
 
 
 def parse_nav_line(line: str) -> Optional[NavSample]:
@@ -80,7 +82,9 @@ def parse_nav_line(line: str) -> Optional[NavSample]:
         integrated=int(fields.get("integrated", 0.0)),
         invalid=int(fields.get("invalid", 0.0)),
         filter_fail=int(fields.get("filter_fail", 0.0)),
-        consecutive_invalid=int(fields.get("consecutive_invalid", 0.0)),
+        filter_timeout=int(fields.get("filter_timeout", 0.0)),
+        imu_invalid=int(fields.get("imu_invalid", 0.0)),
+        imu_timeout=int(fields.get("imu_timeout", 0.0)),
     )
 
 
@@ -129,7 +133,9 @@ def write_csv_header(csv_writer: csv.writer) -> None:
             "integrated",
             "invalid",
             "filter_fail",
-            "consecutive_invalid",
+            "filter_timeout",
+            "imu_invalid",
+            "imu_timeout",
         ]
     )
 
@@ -150,7 +156,9 @@ def write_csv_sample(csv_writer: csv.writer, sample: NavSample) -> None:
             sample.integrated,
             sample.invalid,
             sample.filter_fail,
-            sample.consecutive_invalid,
+            sample.filter_timeout,
+            sample.imu_invalid,
+            sample.imu_timeout,
         ]
     )
 
@@ -241,14 +249,14 @@ def run_plot(args: argparse.Namespace) -> int:
         line_plot.set_data(xs, ys)
         current_plot.set_data([latest.x_m], [latest.y_m])
         status_text.set_text(
-            "x={:.3f} m  y={:.3f} m  yaw={:.2f} deg  frame={}  invalid={}  filter_fail={}  consecutive_invalid={}".format(
+            "x={:.3f} m  y={:.3f} m  yaw={:.2f} deg  frame={}  invalid={}  filter_fail={}  filter_timeout={}".format(
                 latest.x_m,
                 latest.y_m,
                 latest.yaw_deg,
                 latest.frame,
                 latest.invalid,
                 latest.filter_fail,
-                latest.consecutive_invalid,
+                latest.filter_timeout,
             )
         )
         set_equal_axes(ax, xs, ys)

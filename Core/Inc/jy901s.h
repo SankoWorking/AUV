@@ -19,6 +19,8 @@ typedef struct
   float angle_deg[3];
   int16_t temperature_raw;
   uint32_t timestamp_ms;
+  uint32_t gyro_timestamp_ms;
+  uint32_t angle_timestamp_ms;
   uint32_t frame_count;
   uint32_t checksum_error_count;
   uint32_t rx_drop_count;
