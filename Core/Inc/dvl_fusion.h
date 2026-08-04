@@ -17,12 +17,8 @@ typedef struct
 {
   float x_m;
   float y_m;
-	//这个四个数据似乎没什么意义
   float vn_mps;
   float ve_mps;
-  float body_vx_mps;
-  float body_vy_mps;
-	//这四个数据似乎没什么意义
   float yaw_deg;
   uint32_t dvl_frame_count;
 	uint32_t invalid_velocity_count;
@@ -33,11 +29,10 @@ typedef struct
   uint32_t integrated_count;
   uint32_t filter_failure_count;
 	uint32_t filter_timeout_count;
-} DVL_FusionState_t;
+} Nav_State_t;
 
 void DVL_Fusion_Reset(float x_m, float y_m);
-BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot);
-void DVL_Fusion_GetState(DVL_FusionState_t *state);
+void DVL_Fusion_GetState(Nav_State_t *state);
 BaseType_t DVL_Fusion_Task_Init(void);
 BaseType_t DVL_Fusion_SubmitDvlData(const DVL_Data_t *dvl_snapshot);
 
