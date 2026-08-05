@@ -13,7 +13,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TextIO
 
 try:
     import serial
@@ -94,18 +94,27 @@ def serial_reader(
     samples: "queue.Queue[NavSample]",
     stop_event: threading.Event,
     raw_echo: bool,
+    raw_log_file: Optional[TextIO],
 ) -> None:
     assert serial is not None
 
     try:
         with serial.Serial(port=port, baudrate=baudrate, timeout=0.2) as ser:
             print(f"Listening on {ser.port} at {ser.baudrate} baud")
+            ser.reset_input_buffer()
+            time.sleep(0.2)
+            ser.reset_input_buffer()
+
             while not stop_event.is_set():
                 raw_line = ser.readline()
                 if not raw_line:
                     continue
 
                 line = raw_line.decode("utf-8", errors="replace").strip()
+                if raw_log_file is not None:
+                    raw_log_file.write(f"{time.time():.3f},{line}\n")
+                    raw_log_file.flush()
+
                 if raw_echo:
                     print(line)
 
@@ -193,6 +202,16 @@ def run_plot(args: argparse.Namespace) -> int:
     path: deque[NavSample] = deque(maxlen=args.max_points if args.max_points > 0 else None)
     csv_file = None
     csv_writer = None
+    raw_log_file = None
+
+    if not args.no_log:
+        log_dir = Path(args.log_dir)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / time.strftime("serial_%Y%m%d_%H%M%S.log")
+        raw_log_file = log_path.open("w", encoding="utf-8", newline="")
+        raw_log_file.write("received_s,data\n")
+        raw_log_file.flush()
+        print(f"Serial log: {log_path}")
 
     if args.csv:
         csv_path = Path(args.csv)
@@ -203,7 +222,7 @@ def run_plot(args: argparse.Namespace) -> int:
 
     reader = threading.Thread(
         target=serial_reader,
-        args=(args.port, args.baudrate, sample_queue, stop_event, args.echo),
+        args=(args.port, args.baudrate, sample_queue, stop_event, args.echo, raw_log_file),
         daemon=True,
     )
     reader.start()
@@ -275,6 +294,8 @@ def run_plot(args: argparse.Namespace) -> int:
         reader.join(timeout=1.0)
         if csv_file is not None:
             csv_file.close()
+        if raw_log_file is not None:
+            raw_log_file.close()
         # Keep a reference until shutdown; some matplotlib backends require it.
         _ = animation
 
@@ -291,6 +312,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-points", type=int, default=0, help="Maximum points to keep; 0 keeps all")
     parser.add_argument("--csv", help="Optional CSV output path")
     parser.add_argument("--echo", action="store_true", help="Print every received serial line")
+    default_log_dir = Path(__file__).resolve().parents[1] / "Log"
+    parser.add_argument("--log-dir", default=str(default_log_dir), help="Serial log directory")
+    parser.add_argument("--no-log", action="store_true", help="Disable automatic serial log output")
     return parser
 
 

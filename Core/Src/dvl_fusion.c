@@ -18,7 +18,7 @@
 
 #define DVL_FUSION_DVL_OFFSET_X_M             0.15f
 #define DVL_FUSION_DVL_OFFSET_Y_M             0.20f
-#define DVL_FUSION_DVL_TO_IMU_YAW_DEG         0.0f
+#define DVL_FUSION_DVL_TO_IMU_YAW_DEG         10.0f
 
 #define DVL_FUSION_IMU_SYNC_THRESHOLD_MS      200U
 
@@ -84,19 +84,16 @@ static void DVL_Fusion_UpdateNavState(const DVL_Data_t *dvl,
                                       const JY901S_Data_t *imu,
                                       float vn_mps,
                                       float ve_mps,
-                                      uint8_t integrate,
                                       float dt_s)
 {
   if (DVL_Fusion_Lock(portMAX_DELAY) == pdTRUE)
   {
-    if (integrate != 0U)
-    {
-      navState.x_m += 0.5f * (fusionState.last_vn_mps + vn_mps) * dt_s;
-      navState.y_m += 0.5f * (fusionState.last_ve_mps + ve_mps) * dt_s;
-      navState.integrated_count++;
-      navState.nav_timestamp_ms = dvl->timestamp;
-    }
-
+    navState.x_m += 0.5f * (fusionState.last_vn_mps + vn_mps) * dt_s;
+    navState.y_m += 0.5f * (fusionState.last_ve_mps + ve_mps) * dt_s;
+    navState.integrated_count++;
+    navState.nav_timestamp_ms = dvl->timestamp;
+    navState.dvl_vx_mm_s = dvl->raw_vx;
+    navState.dvl_vy_mm_s = dvl->raw_vy;
     navState.vn_mps = vn_mps;
     navState.ve_mps = ve_mps;
     navState.yaw_deg = imu->angle_deg[2];
@@ -260,7 +257,6 @@ static BaseType_t DVL_Fusion_ImuSync(JY901S_Data_t *imu,
 }
 
 static void DVL_Fusion_SetBaseline(const DVL_Data_t *dvl,
-                                   const JY901S_Data_t *imu,
                                    float body_vx_mps,
                                    float body_vy_mps,
                                    float vn_mps,
@@ -275,13 +271,6 @@ static void DVL_Fusion_SetBaseline(const DVL_Data_t *dvl,
   fusionState.consecutive_motion_rejects = 0U;
   fusionState.filter_timeout_recovering = 0U;
   fusionState.filter_timeout_recovery_count = 0U;
-
-  DVL_Fusion_UpdateNavState(dvl,
-                            imu,
-                            vn_mps,
-                            ve_mps,
-                            0U,
-                            0.0f);
 }
 
 void DVL_Fusion_Reset(float x_m, float y_m)
@@ -445,7 +434,7 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
       ve_mps = 0.0f;
     }
 
-    DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
+    DVL_Fusion_SetBaseline(&dvl, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
     return pdFAIL;
   }
 
@@ -486,7 +475,7 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
     body_vy_mps = 0.0f;
     vn_mps = 0.0f;
     ve_mps = 0.0f;
-    DVL_Fusion_SetBaseline(&dvl, &imu, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
+    DVL_Fusion_SetBaseline(&dvl, body_vx_mps, body_vy_mps, vn_mps, ve_mps);
     return pdFAIL;
   }
 
@@ -497,7 +486,6 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
                             &imu,
                             vn_mps,
                             ve_mps,
-                            1U,
                             dt_s);
   fusionState.last_vn_mps = vn_mps;
   fusionState.last_ve_mps = ve_mps;
