@@ -15,8 +15,11 @@
 #define DVL_FUSION_MM_S_TO_M_S                0.001f
 #define DVL_FUSION_DEG_TO_RAD                 0.017453292519943295f
 #define DVL_FUSION_SPEED_DEADBAND_MM_S        10.0f
+
 #define DVL_FUSION_DVL_OFFSET_X_M             0.15f
 #define DVL_FUSION_DVL_OFFSET_Y_M             0.20f
+#define DVL_FUSION_DVL_TO_IMU_YAW_DEG         0.0f
+
 #define DVL_FUSION_IMU_SYNC_THRESHOLD_MS      200U
 
 #define DVL_FUSION_BASE_NOISE_M_S             0.03f
@@ -24,13 +27,8 @@
 #define DVL_FUSION_TURN_MARGIN_M_S            0.02f
 #define DVL_FUSION_HARD_JUMP_M_S              1.50f
 #define DVL_FUSION_MOTION_REJECT_LIMIT        3U
-#define DVL_FUSION_FILTER_TIMEOUT_RECOVERY_LIMIT 2U
+#define DVL_FUSION_FILTER_TIMEOUT_RECOVERY_LIMIT 1U
 
-/**
- * @brief  融合任务在计算时储存中间数据时用到的结构体。
- * 
- * invalid_velocity_count 总计出现DVL失锁的次数
- */
 typedef struct
 {
   uint32_t invalid_velocity_count;
@@ -127,6 +125,19 @@ static void DVL_Fusion_BodyToNav(float body_vx_mps,
 
   *vn_mps = (c * body_vx_mps) - (s * body_vy_mps);
   *ve_mps = (s * body_vx_mps) + (c * body_vy_mps);
+}
+
+static void DVL_Fusion_CompensateDvlToImuRotation(float dvl_vx_mps,
+                                                  float dvl_vy_mps,
+                                                  float *imu_vx_mps,
+                                                  float *imu_vy_mps)
+{
+  float yaw_rad = DVL_FUSION_DVL_TO_IMU_YAW_DEG * DVL_FUSION_DEG_TO_RAD;
+  float cy = cosf(yaw_rad);
+  float sy = sinf(yaw_rad);
+
+  *imu_vx_mps = (cy * dvl_vx_mps) - (sy * dvl_vy_mps);
+  *imu_vy_mps = (sy * dvl_vx_mps) + (cy * dvl_vy_mps);
 }
 
 /**
@@ -342,6 +353,8 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
 {
   DVL_Data_t dvl;
   JY901S_Data_t imu;
+  float imu_vx_mps;
+  float imu_vy_mps;
   float body_vx_mps;
   float body_vy_mps;
   float vn_mps;
@@ -403,9 +416,14 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
     fusionState.have_last_velocity = 0U;
   }
 
+  DVL_Fusion_CompensateDvlToImuRotation(dvl.raw_vx * DVL_FUSION_MM_S_TO_M_S,
+                                        dvl.raw_vy * DVL_FUSION_MM_S_TO_M_S,
+                                        &imu_vx_mps,
+                                        &imu_vy_mps);
+
 	//杆臂补偿
-  DVL_Fusion_CompensateLeverArm(dvl.raw_vx * DVL_FUSION_MM_S_TO_M_S,
-                                dvl.raw_vy * DVL_FUSION_MM_S_TO_M_S,
+  DVL_Fusion_CompensateLeverArm(imu_vx_mps,
+                                imu_vy_mps,
                                 imu.gyro_dps[2],
                                 &body_vx_mps,
                                 &body_vy_mps);
