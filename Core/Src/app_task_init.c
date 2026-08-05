@@ -19,7 +19,7 @@ static void TestTask(void *argument)
 {
   (void)argument;
 	Nav_State_t nav={0};
-	DVL_Data_t dvl={0};
+	//DVL_Data_t dvl={0};
   if (Startup_WaitSystemReady(osWaitForever) != pdPASS)
   {
     for (;;)
@@ -33,21 +33,17 @@ static void TestTask(void *argument)
 
 		DVL_Fusion_GetState(&nav);
 		
-    Log_printf("[NAV]x_m: %.3f y_m: %.3f vn_mps: %.3f ve_mps: %.3f yaw_deg: %.2f frame: %lu nav_timestamp: %lu integrated: %lu invalid: %lu filter_fail: %lu filter_timeout: %lu imu_invalid: %lu imu_timeout: %lu\r\n",
-               nav.x_m,
-               nav.y_m,
-               nav.vn_mps,
-               nav.ve_mps,
-               nav.yaw_deg,
-               (unsigned long)nav.dvl_frame_count,
-               (unsigned long)nav.nav_timestamp_ms,
-               (unsigned long)nav.integrated_count,
-               (unsigned long)nav.invalid_velocity_count,
-               (unsigned long)nav.filter_failure_count,
-               (unsigned long)nav.filter_timeout_count,
-               (unsigned long)nav.imu_invalid_count,
-               (unsigned long)nav.imu_timeout_count);
-
+	  Log_printf("[NAV]x_m: %.3f y_m: %.3f vn_mps: %.3f ve_mps: %.3f yaw_deg: %.2f dvl_vx: %.2f dvl_vy: %.2f invalid: %lu frame: %lu\r\n",
+					 nav.x_m,
+					 nav.y_m,
+					 nav.vn_mps,
+					 nav.ve_mps,
+					 nav.yaw_deg,
+					 nav.dvl_vx_mm_s,
+					 nav.dvl_vy_mm_s,
+					 (unsigned long)nav.invalid_velocity_count,
+					 (unsigned long)nav.dvl_frame_count);
+/*
 		DVL_GetData(&dvl);
     Log_printf("[DVL]raw_vx: %.2f raw_vy: %.2f raw_vz: %.2f raw_ve: %.2f status: %c frame: %lu timestamp: %lu\r\n",
                dvl.raw_vx,
@@ -57,7 +53,7 @@ static void TestTask(void *argument)
                (char)dvl.status,
                (unsigned long)dvl.frame_count,
                (unsigned long)dvl.timestamp);
-
+*/
 		
 		osDelay(150);
   }
