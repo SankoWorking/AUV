@@ -7,6 +7,7 @@
 #include "stream_buffer.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 extern UART_HandleTypeDef huart5;
 #define DVL_UART_HANDLE   huart5
@@ -14,29 +15,29 @@ extern UART_HandleTypeDef huart5;
 
 #define DVL_EVENT_RX_STARTED    (1U << 0)
 #define DVL_EVENT_READY         (1U << 1)
-#define DVL_EVENT_STARTUP_ACK   (1U << 2)
 
 #define DVL_RX_STREAM_SIZE      256U
 #define DVL_RX_TASK_CHUNK_SIZE  32U
 
 #define DVL_LINE_BUFFER_SIZE    96U
-#define DVL_STARTUP_COMMAND     "ML 800,SV 0\r\n"
-#define DVL_STARTUP_ACK_CHECK_ENABLE 0U
+#define DVL_STARTUP_COMMAND     "ML \r\n"
 #define DVL_STARTUP_TX_TIMEOUT_MS 100U
-#define DVL_STARTUP_FORWARD_WINDOW_MS 10000U
-#define DVL_RX_START_TIMEOUT_MS 2000U
-#define DVL_STARTUP_ACK_PREFIX  "ML "
-#define DVL_STARTUP_ACK_VALUE   600.0f
-#define DVL_STARTUP_ACK_EPSILON 0.1f
+#define DVL_STARTUP_RAW_CAPTURE_MS 5000U
+#define DVL_RX_START_TIMEOUT_MS 5000U
+#define DVL_RAW_CAPTURE_BUFFER_SIZE 24576U
+#define DVL_RAW_CAPTURE_BYTES_PER_LINE 48U
+#define DVL_RAW_CAPTURE_LOG_DELAY_MS 20U
 
 
 
 static void DVL_Task(void *argument);
 static void DVL_ParseByte(uint8_t byte);
 static void DVL_ParseLine(char *line);
-#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
-static uint8_t DVL_ParseStartupAck(char *line);
-#endif
+static void DVL_RawCaptureStart(void);
+static void DVL_RawCaptureStop(void);
+static uint8_t DVL_RawCaptureIsActive(void);
+static void DVL_RawCaptureOnByte(uint8_t byte);
+static void DVL_RawCaptureDump(void);
 static void DVL_RestartReceiveFromIsr(void);
 
 static DVL_Data_t dvlData;
@@ -46,8 +47,10 @@ static osThreadId_t dvlTaskHandle;
 static osEventFlagsId_t dvlEventFlags;
 static uint8_t dvlRxByte;
 static uint8_t dvlConsecutiveValidFrames;
-static volatile uint8_t dvlWaitingStartupAck;
-static volatile uint8_t dvlForwardStartupLines;
+static uint8_t dvlRawCaptureBuffer[DVL_RAW_CAPTURE_BUFFER_SIZE];
+static volatile uint8_t dvlRawCaptureActive;
+static volatile uint32_t dvlRawCaptureLength;
+static volatile uint32_t dvlRawCaptureDropped;
 
 static const osThreadAttr_t dvlTaskAttributes = {
   .name = "dvl_task",
@@ -109,43 +112,22 @@ BaseType_t DVL_ConfigureStartup(void)
   }
 
   dvlConsecutiveValidFrames = 0U;
-#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
-  (void)osEventFlagsClear(dvlEventFlags, DVL_EVENT_READY | DVL_EVENT_STARTUP_ACK);
-  dvlWaitingStartupAck = 1U;
-  dvlForwardStartupLines = 1U;
-#else
   (void)osEventFlagsClear(dvlEventFlags, DVL_EVENT_READY);
-  dvlWaitingStartupAck = 0U;
-  dvlForwardStartupLines = 0U;
-#endif
-
+	osDelay(3000);
+  DVL_RawCaptureStart();
   if (HAL_UART_Transmit(&DVL_UART_HANDLE,
                         (uint8_t *)startupCommand,
                         (uint16_t)(sizeof(startupCommand) - 1U),
                         DVL_STARTUP_TX_TIMEOUT_MS) != HAL_OK)
   {
-    dvlForwardStartupLines = 0U;
-    dvlWaitingStartupAck = 0U;
+    DVL_RawCaptureStop();
+    DVL_RawCaptureDump();
     return pdFAIL;
   }
 
-#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
-  osDelay(DVL_STARTUP_FORWARD_WINDOW_MS);
-  dvlForwardStartupLines = 0U;
-  dvlWaitingStartupAck = 0U;
-
-  flags = osEventFlagsGet(dvlEventFlags);
-  if ((flags & DVL_EVENT_STARTUP_ACK) == 0U)
-  {
-    Log_printf("[DVL] startup_ack result=timeout expected=ML %.1f\r\n",
-               DVL_STARTUP_ACK_VALUE);
-    return pdFAIL;
-  }
-
-  Log_printf("[DVL] startup_ack result=ok\r\n");
-#else
-  Log_printf("[DVL] startup_ack check=disabled\r\n");
-#endif
+  osDelay(DVL_STARTUP_RAW_CAPTURE_MS);
+  DVL_RawCaptureStop();
+  DVL_RawCaptureDump();
 
   return pdPASS;
 }
@@ -206,10 +188,20 @@ void DVL_UART_RxCpltCallback(UART_HandleTypeDef *huart,
 
     if (dvlRxStream != NULL)
     {
-      (void)xStreamBufferSendFromISR(dvlRxStream,
-                                     &dvlRxByte,
-                                     1U,
-                                     taskWoken);
+      if (xStreamBufferSendFromISR(dvlRxStream,
+                                   &dvlRxByte,
+                                   1U,
+                                   taskWoken) != 1U)
+      {
+        if (dvlRawCaptureActive != 0U)
+        {
+          dvlRawCaptureDropped++;
+        }
+      }
+    }
+    else if (dvlRawCaptureActive != 0U)
+    {
+      dvlRawCaptureDropped++;
     }
 
     DVL_RestartReceiveFromIsr();
@@ -246,6 +238,7 @@ static void DVL_Task(void *argument)
 
     for (i = 0U; i < receivedLength; i++)
     {
+      DVL_RawCaptureOnByte(rxChunk[i]);
       DVL_ParseByte(rxChunk[i]);
     }
   }
@@ -256,7 +249,8 @@ static void DVL_ParseByte(uint8_t byte)
   static char line[DVL_LINE_BUFFER_SIZE];
   static uint8_t index;
 
-  if (byte == (uint8_t)':')
+  if ((byte == (uint8_t)':') &&
+      ((index == 0U) || (DVL_RawCaptureIsActive() == 0U)))
   {
     index = 0U;
     line[index++] = (char)byte;
@@ -275,6 +269,11 @@ static void DVL_ParseByte(uint8_t byte)
   }
 
   if (byte == (uint8_t)'\r')
+  {
+    return;
+  }
+
+  if ((index == 0U) && (DVL_RawCaptureIsActive() == 0U))
   {
     return;
   }
@@ -305,18 +304,6 @@ static void DVL_ParseLine(char *line)
   {
     return;
   }
-
-  if (dvlForwardStartupLines != 0U)
-  {
-    Log_printf("[DVL CONFIG]%s\r\n", line);
-  }
-
-#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
-  if ((dvlWaitingStartupAck != 0U) && (DVL_ParseStartupAck(line) != 0U))
-  {
-    return;
-  }
-#endif
 
   if (strncmp(line, ":BI,", 4) != 0)
   {
@@ -380,35 +367,101 @@ static void DVL_ParseLine(char *line)
     dvlConsecutiveValidFrames = 0U;
   }
 }
-#if (DVL_STARTUP_ACK_CHECK_ENABLE != 0U)
-static uint8_t DVL_ParseStartupAck(char *line)
+
+static void DVL_RawCaptureStart(void)
 {
-  char *p;
-  float ackValue;
-
-  while (*line == ':')
-  {
-    line++;
-  }
-
-  if (strncmp(line, DVL_STARTUP_ACK_PREFIX, strlen(DVL_STARTUP_ACK_PREFIX)) != 0)
-  {
-    return 0U;
-  }
-
-  p = line + strlen(DVL_STARTUP_ACK_PREFIX);
-  ackValue = strtof(p, &p);
-
-  if ((ackValue > (DVL_STARTUP_ACK_VALUE - DVL_STARTUP_ACK_EPSILON)) &&
-      (ackValue < (DVL_STARTUP_ACK_VALUE + DVL_STARTUP_ACK_EPSILON)))
-  {
-    (void)osEventFlagsSet(dvlEventFlags, DVL_EVENT_STARTUP_ACK);
-    return 1U;
-  }
-
-  return 0U;
+  dvlRawCaptureLength = 0U;
+  dvlRawCaptureDropped = 0U;
+  dvlRawCaptureActive = 1U;
 }
-#endif
+
+static void DVL_RawCaptureStop(void)
+{
+  dvlRawCaptureActive = 0U;
+}
+
+static uint8_t DVL_RawCaptureIsActive(void)
+{
+  return dvlRawCaptureActive;
+}
+
+static void DVL_RawCaptureOnByte(uint8_t byte)
+{
+  uint32_t index;
+
+  if (dvlRawCaptureActive == 0U)
+  {
+    return;
+  }
+
+  index = dvlRawCaptureLength;
+  if (index < DVL_RAW_CAPTURE_BUFFER_SIZE)
+  {
+    dvlRawCaptureBuffer[index] = byte;
+    dvlRawCaptureLength = index + 1U;
+  }
+  else
+  {
+    dvlRawCaptureDropped++;
+  }
+}
+
+static void DVL_RawCaptureDump(void)
+{
+  static const char hexDigits[] = "0123456789ABCDEF";
+  uint32_t length = dvlRawCaptureLength;
+  uint32_t dropped = dvlRawCaptureDropped;
+  uint32_t offset;
+  char line[192];
+
+  Log_printf("[DVLRAW] capture_ms=%u len=%lu dropped=%lu\r\n",
+             DVL_STARTUP_RAW_CAPTURE_MS,
+             (unsigned long)length,
+             (unsigned long)dropped);
+  osDelay(DVL_RAW_CAPTURE_LOG_DELAY_MS);
+
+  for (offset = 0U; offset < length; offset += DVL_RAW_CAPTURE_BYTES_PER_LINE)
+  {
+    uint32_t count = length - offset;
+    uint32_t i;
+    int pos;
+
+    if (count > DVL_RAW_CAPTURE_BYTES_PER_LINE)
+    {
+      count = DVL_RAW_CAPTURE_BYTES_PER_LINE;
+    }
+
+    pos = snprintf(line,
+                   sizeof(line),
+                   "[DVLRAW] %04lu:",
+                   (unsigned long)offset);
+    if (pos < 0)
+    {
+      return;
+    }
+
+    for (i = 0U; (i < count) && ((size_t)(pos + 4) < sizeof(line)); i++)
+    {
+      uint8_t byte = dvlRawCaptureBuffer[offset + i];
+      line[pos++] = ' ';
+      line[pos++] = hexDigits[(byte >> 4) & 0x0FU];
+      line[pos++] = hexDigits[byte & 0x0FU];
+    }
+
+    if ((size_t)(pos + 2) < sizeof(line))
+    {
+      line[pos++] = '\r';
+      line[pos++] = '\n';
+    }
+    line[pos] = '\0';
+
+    (void)Log_write(line, (size_t)pos);
+    osDelay(DVL_RAW_CAPTURE_LOG_DELAY_MS);
+  }
+
+  Log_printf("[DVLRAW_END]\r\n");
+  osDelay(DVL_RAW_CAPTURE_LOG_DELAY_MS);
+}
 
 static void DVL_RestartReceiveFromIsr(void)
 {
