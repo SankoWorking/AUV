@@ -6,8 +6,8 @@
 #include "semphr.h"
 #include "stream_buffer.h"
 #include <stdlib.h>
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
 
 extern UART_HandleTypeDef huart5;
 #define DVL_UART_HANDLE   huart5
@@ -20,13 +20,14 @@ extern UART_HandleTypeDef huart5;
 #define DVL_RX_TASK_CHUNK_SIZE  32U
 
 #define DVL_LINE_BUFFER_SIZE    96U
-#define DVL_STARTUP_COMMAND     "ML \r\n"
+#define DVL_STARTUP_COMMAND_1    "PM"
+#define DVL_STARTUP_COMMAND_2     "ML"
+#define Append_CRLF(s) s"\r\n"
 #define DVL_STARTUP_TX_TIMEOUT_MS 100U
-#define DVL_STARTUP_RAW_CAPTURE_MS 5000U
 #define DVL_RX_START_TIMEOUT_MS 5000U
 #define DVL_RAW_CAPTURE_BUFFER_SIZE 24576U
-#define DVL_RAW_CAPTURE_BYTES_PER_LINE 48U
 #define DVL_RAW_CAPTURE_LOG_DELAY_MS 20U
+#define DVL_RAW_CAPTURE_FORWARD_CHUNK_SIZE 128U
 
 
 
@@ -38,6 +39,8 @@ static void DVL_RawCaptureStop(void);
 static uint8_t DVL_RawCaptureIsActive(void);
 static void DVL_RawCaptureOnByte(uint8_t byte);
 static void DVL_RawCaptureDump(void);
+static BaseType_t DVL_SendStartupCommand(const uint8_t *command,
+                                         const char *label);
 static void DVL_RestartReceiveFromIsr(void);
 
 static DVL_Data_t dvlData;
@@ -95,7 +98,8 @@ BaseType_t DVL_Init(void)
 BaseType_t DVL_ConfigureStartup(void)
 {
   uint32_t flags;
-  const uint8_t startupCommand[] = DVL_STARTUP_COMMAND;
+  const uint8_t startupCommand_1[] = Append_CRLF(DVL_STARTUP_COMMAND_1);
+  const uint8_t startupCommand_2[] = Append_CRLF(DVL_STARTUP_COMMAND_2);
 
   if (dvlEventFlags == NULL)
   {
@@ -111,24 +115,25 @@ BaseType_t DVL_ConfigureStartup(void)
     return pdFAIL;
   }
 
+  osDelay(3000);
+  DVL_RawCaptureStart();
   dvlConsecutiveValidFrames = 0U;
   (void)osEventFlagsClear(dvlEventFlags, DVL_EVENT_READY);
-	osDelay(3000);
-  DVL_RawCaptureStart();
-  if (HAL_UART_Transmit(&DVL_UART_HANDLE,
-                        (uint8_t *)startupCommand,
-                        (uint16_t)(sizeof(startupCommand) - 1U),
-                        DVL_STARTUP_TX_TIMEOUT_MS) != HAL_OK)
+
+  if (DVL_SendStartupCommand(startupCommand_1,
+                             DVL_STARTUP_COMMAND_1) != pdPASS)
   {
-    DVL_RawCaptureStop();
-    DVL_RawCaptureDump();
     return pdFAIL;
   }
-
-  osDelay(DVL_STARTUP_RAW_CAPTURE_MS);
-  DVL_RawCaptureStop();
+	osDelay(1000);
+  if (DVL_SendStartupCommand(startupCommand_2,
+                             DVL_STARTUP_COMMAND_2) != pdPASS)
+  {
+    return pdFAIL;
+  }
+	osDelay(1000);
+	DVL_RawCaptureStop();
   DVL_RawCaptureDump();
-
   return pdPASS;
 }
 
@@ -368,7 +373,7 @@ static void DVL_ParseLine(char *line)
   }
 }
 
-static void DVL_RawCaptureStart(void)
+static void DVL_RawCaptureStart()
 {
   dvlRawCaptureLength = 0U;
   dvlRawCaptureDropped = 0U;
@@ -408,59 +413,63 @@ static void DVL_RawCaptureOnByte(uint8_t byte)
 
 static void DVL_RawCaptureDump(void)
 {
-  static const char hexDigits[] = "0123456789ABCDEF";
   uint32_t length = dvlRawCaptureLength;
   uint32_t dropped = dvlRawCaptureDropped;
   uint32_t offset;
-  char line[192];
 
-  Log_printf("[DVLRAW] capture_ms=%u len=%lu dropped=%lu\r\n",
-             DVL_STARTUP_RAW_CAPTURE_MS,
+  Log_printf("[DVLRAW] len=%lu dropped=%lu\r\n",
              (unsigned long)length,
              (unsigned long)dropped);
   osDelay(DVL_RAW_CAPTURE_LOG_DELAY_MS);
 
-  for (offset = 0U; offset < length; offset += DVL_RAW_CAPTURE_BYTES_PER_LINE)
+  for (offset = 0U; offset < length; offset += DVL_RAW_CAPTURE_FORWARD_CHUNK_SIZE)
   {
     uint32_t count = length - offset;
     uint32_t i;
-    int pos;
+    char chunk[DVL_RAW_CAPTURE_FORWARD_CHUNK_SIZE];
 
-    if (count > DVL_RAW_CAPTURE_BYTES_PER_LINE)
+    if (count > DVL_RAW_CAPTURE_FORWARD_CHUNK_SIZE)
     {
-      count = DVL_RAW_CAPTURE_BYTES_PER_LINE;
+      count = DVL_RAW_CAPTURE_FORWARD_CHUNK_SIZE;
     }
 
-    pos = snprintf(line,
-                   sizeof(line),
-                   "[DVLRAW] %04lu:",
-                   (unsigned long)offset);
-    if (pos < 0)
-    {
-      return;
-    }
-
-    for (i = 0U; (i < count) && ((size_t)(pos + 4) < sizeof(line)); i++)
+    for (i = 0U; i < count; i++)
     {
       uint8_t byte = dvlRawCaptureBuffer[offset + i];
-      line[pos++] = ' ';
-      line[pos++] = hexDigits[(byte >> 4) & 0x0FU];
-      line[pos++] = hexDigits[byte & 0x0FU];
+      chunk[i] = (byte == 0U) ? '!' : (char)byte;
     }
 
-    if ((size_t)(pos + 2) < sizeof(line))
-    {
-      line[pos++] = '\r';
-      line[pos++] = '\n';
-    }
-    line[pos] = '\0';
-
-    (void)Log_write(line, (size_t)pos);
+    (void)Log_write(chunk, count);
     osDelay(DVL_RAW_CAPTURE_LOG_DELAY_MS);
   }
 
-  Log_printf("[DVLRAW_END]\r\n");
+  Log_printf("\r\n[DVLRAW_END]\r\n");
   osDelay(DVL_RAW_CAPTURE_LOG_DELAY_MS);
+}
+
+static BaseType_t DVL_SendStartupCommand(const uint8_t *command,
+                                         const char *label)
+{
+  if ((command == NULL) || (label == NULL))
+  {
+    return pdFAIL;
+  }
+  Log_printf("[DVLConfig]Send %s\r\n", label);
+  
+  if (HAL_UART_Transmit(&DVL_UART_HANDLE,
+                        (uint8_t *)command,
+                        sizeof(command)-1,
+                        DVL_STARTUP_TX_TIMEOUT_MS) != HAL_OK)
+  {
+    DVL_RawCaptureStop();
+    DVL_RawCaptureDump();
+    Log_printf("[DVLConfig]%s fail\r\n", label);
+    return pdFAIL;
+  }
+
+  Log_printf("[DVLConfig]%s success\r\n", label);
+
+  return pdPASS;
 }
 
 static void DVL_RestartReceiveFromIsr(void)

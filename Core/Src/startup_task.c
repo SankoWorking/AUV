@@ -76,12 +76,13 @@ static void Startup_Fail(const char *reason)
 static void StartupTask(void *argument)
 {
   (void)argument;
-
+	/*
   if (DVL_ConfigureStartup() != pdPASS)
   {
     Startup_Fail("dvl_config");
   }
-
+	*/
+  osDelay(5000);
   Log_printf("[STARTUP] phase=start\r\n");
   Log_printf("[STARTUP] phase=dvl_wait_ready valid_frames=%u\r\n",
              DVL_STARTUP_VALID_FRAME_COUNT);
