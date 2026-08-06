@@ -20,8 +20,13 @@ typedef struct
   float vn_mps;
   float ve_mps;
   float yaw_deg;
+  float yaw_rate_dps;
   float dvl_vx_mm_s;
   float dvl_vy_mm_s;
+  float rot_vx_mps;
+  float rot_vy_mps;
+  float body_vx_mps;
+  float body_vy_mps;
   uint32_t dvl_frame_count;
 	uint32_t invalid_velocity_count;
 	

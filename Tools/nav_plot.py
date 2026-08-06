@@ -42,6 +42,9 @@ class NavSample:
     y_m: float
     vn_mps: float = 0.0
     ve_mps: float = 0.0
+    yaw_rate_dps: float = 0.0
+    rot_vx_mps: float = 0.0
+    rot_vy_mps: float = 0.0
     body_vx_mps: float = 0.0
     body_vy_mps: float = 0.0
     yaw_deg: float = 0.0
@@ -49,8 +52,6 @@ class NavSample:
     filter_timestamp: int = 0
     integrated: int = 0
     invalid: int = 0
-    filter_fail: int = 0
-    filter_timeout: int = 0
     imu_invalid: int = 0
     imu_timeout: int = 0
 
@@ -74,6 +75,9 @@ def parse_nav_line(line: str) -> Optional[NavSample]:
         y_m=fields["y_m"],
         vn_mps=fields.get("vn_mps", 0.0),
         ve_mps=fields.get("ve_mps", 0.0),
+        yaw_rate_dps=fields.get("wz_dps", fields.get("yaw_rate_dps", 0.0)),
+        rot_vx_mps=fields.get("rot_vx_mps", 0.0),
+        rot_vy_mps=fields.get("rot_vy_mps", 0.0),
         body_vx_mps=fields.get("body_vx_mps", 0.0),
         body_vy_mps=fields.get("body_vy_mps", 0.0),
         yaw_deg=fields.get("yaw_deg", 0.0),
@@ -81,8 +85,6 @@ def parse_nav_line(line: str) -> Optional[NavSample]:
         filter_timestamp=int(fields.get("filter_timestamp", 0.0)),
         integrated=int(fields.get("integrated", 0.0)),
         invalid=int(fields.get("invalid", 0.0)),
-        filter_fail=int(fields.get("filter_fail", 0.0)),
-        filter_timeout=int(fields.get("filter_timeout", 0.0)),
         imu_invalid=int(fields.get("imu_invalid", 0.0)),
         imu_timeout=int(fields.get("imu_timeout", 0.0)),
     )
@@ -134,6 +136,9 @@ def write_csv_header(csv_writer: csv.writer) -> None:
             "y_m",
             "vn_mps",
             "ve_mps",
+            "yaw_rate_dps",
+            "rot_vx_mps",
+            "rot_vy_mps",
             "body_vx_mps",
             "body_vy_mps",
             "yaw_deg",
@@ -141,8 +146,6 @@ def write_csv_header(csv_writer: csv.writer) -> None:
             "filter_timestamp",
             "integrated",
             "invalid",
-            "filter_fail",
-            "filter_timeout",
             "imu_invalid",
             "imu_timeout",
         ]
@@ -157,6 +160,9 @@ def write_csv_sample(csv_writer: csv.writer, sample: NavSample) -> None:
             f"{sample.y_m:.6f}",
             f"{sample.vn_mps:.6f}",
             f"{sample.ve_mps:.6f}",
+            f"{sample.yaw_rate_dps:.3f}",
+            f"{sample.rot_vx_mps:.6f}",
+            f"{sample.rot_vy_mps:.6f}",
             f"{sample.body_vx_mps:.6f}",
             f"{sample.body_vy_mps:.6f}",
             f"{sample.yaw_deg:.3f}",
@@ -164,8 +170,6 @@ def write_csv_sample(csv_writer: csv.writer, sample: NavSample) -> None:
             sample.filter_timestamp,
             sample.integrated,
             sample.invalid,
-            sample.filter_fail,
-            sample.filter_timeout,
             sample.imu_invalid,
             sample.imu_timeout,
         ]
@@ -268,14 +272,17 @@ def run_plot(args: argparse.Namespace) -> int:
         line_plot.set_data(xs, ys)
         current_plot.set_data([latest.x_m], [latest.y_m])
         status_text.set_text(
-            "x={:.3f} m  y={:.3f} m  yaw={:.2f} deg  frame={}  invalid={}  filter_fail={}  filter_timeout={}".format(
+            "x={:.3f} y={:.3f} yaw={:.1f} wz={:.1f} rot=({:.3f},{:.3f}) body=({:.3f},{:.3f}) invalid={} frame={}".format(
                 latest.x_m,
                 latest.y_m,
                 latest.yaw_deg,
-                latest.frame,
+                latest.yaw_rate_dps,
+                latest.rot_vx_mps,
+                latest.rot_vy_mps,
+                latest.body_vx_mps,
+                latest.body_vy_mps,
                 latest.invalid,
-                latest.filter_fail,
-                latest.filter_timeout,
+                latest.frame,
             )
         )
         set_equal_axes(ax, xs, ys)
@@ -312,7 +319,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-points", type=int, default=0, help="Maximum points to keep; 0 keeps all")
     parser.add_argument("--csv", help="Optional CSV output path")
     parser.add_argument("--echo", action="store_true", help="Print every received serial line")
-    default_log_dir = Path(__file__).resolve().parents[1] / "Log"
+    default_log_dir = Path(__file__).resolve().parents[1] / "Log" / "nav"
     parser.add_argument("--log-dir", default=str(default_log_dir), help="Serial log directory")
     parser.add_argument("--no-log", action="store_true", help="Disable automatic serial log output")
     return parser

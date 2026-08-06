@@ -33,3 +33,6 @@ MDK-ARM/*.htm
 
 # Log
 Log/*
+
+#Tools
+Tools/__pycache__

@@ -16,9 +16,9 @@
 #define DVL_FUSION_DEG_TO_RAD                 0.017453292519943295f
 #define DVL_FUSION_SPEED_DEADBAND_MM_S        10.0f
 
-#define DVL_FUSION_DVL_OFFSET_X_M             0.38f
+#define DVL_FUSION_DVL_OFFSET_X_M             0.20f
 #define DVL_FUSION_DVL_OFFSET_Y_M             0.025f
-#define DVL_FUSION_DVL_TO_IMU_YAW_DEG         7.5f
+#define DVL_FUSION_DVL_TO_IMU_YAW_DEG         (-7.5f)
 #define DVL_FUSION_IMU_YAW_SIGN               (-1.0f)
 
 #define DVL_FUSION_IMU_SYNC_THRESHOLD_MS      200U
@@ -83,6 +83,11 @@ static void DVL_Fusion_Unlock(void)
 
 static void DVL_Fusion_UpdateNavState(const DVL_Data_t *dvl,
                                       float body_yaw_deg,
+                                      float body_yaw_rate_dps,
+                                      float rot_vx_mps,
+                                      float rot_vy_mps,
+                                      float body_vx_mps,
+                                      float body_vy_mps,
                                       float vn_mps,
                                       float ve_mps,
                                       float dt_s)
@@ -98,7 +103,12 @@ static void DVL_Fusion_UpdateNavState(const DVL_Data_t *dvl,
     navState.vn_mps = vn_mps;
     navState.ve_mps = ve_mps;
     navState.yaw_deg = body_yaw_deg;
+    navState.yaw_rate_dps = body_yaw_rate_dps;
     navState.dvl_frame_count = dvl->frame_count;
+    navState.rot_vx_mps = rot_vx_mps;
+    navState.rot_vy_mps = rot_vy_mps;
+    navState.body_vx_mps = body_vx_mps;
+    navState.body_vy_mps = body_vy_mps;
     navState.invalid_velocity_count = fusionState.invalid_velocity_count;
 		navState.imu_invalid_count = fusionState.imu_invalid_count;
 		navState.imu_timeout_count = fusionState.imu_timeout_count;
@@ -390,7 +400,6 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
     return pdFAIL;
   }
 
-  /* Filter-timeout recovery requires consecutive IMU-synced DVL frames. */
   if (fusionState.filter_timeout_recovering != 0U)
   {
     if (fusionState.filter_timeout_recovery_count < 255U)
@@ -456,6 +465,7 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
 
 	//滤波
   dt_s = (float)dt_ms / 1000.0f;
+	/*
   if (DVL_Fusion_Filter(&body_vx_mps,
                         &body_vy_mps,
                         body_yaw_rate_dps,
@@ -468,7 +478,7 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
     }
     return pdFAIL;
   }
-
+*/
   DVL_Fusion_BodyToNav(body_vx_mps,
                        body_vy_mps,
                        body_yaw_deg,
@@ -490,6 +500,11 @@ static BaseType_t DVL_Fusion_Update(const DVL_Data_t *dvl_snapshot)
   fusionState.filter_timestamp_ms = dvl.timestamp;
   DVL_Fusion_UpdateNavState(&dvl,
                             body_yaw_deg,
+                            body_yaw_rate_dps,
+                            imu_vx_mps,
+                            imu_vy_mps,
+                            body_vx_mps,
+                            body_vy_mps,
                             vn_mps,
                             ve_mps,
                             dt_s);
